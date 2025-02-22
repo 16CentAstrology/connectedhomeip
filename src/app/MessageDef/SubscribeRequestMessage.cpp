@@ -115,7 +115,7 @@ CHIP_ERROR SubscribeRequestMessage::Parser::PrettyPrint() const
         }
 #endif // CHIP_DETAIL_LOGGING
         break;
-        case kInteractionModelRevisionTag:
+        case Revision::kInteractionModelRevisionTag:
             ReturnErrorOnFailure(MessageParser::CheckInteractionModelRevision(reader));
             break;
         default:
@@ -261,7 +261,7 @@ SubscribeRequestMessage::Builder & SubscribeRequestMessage::Builder::IsFabricFil
     return *this;
 }
 
-SubscribeRequestMessage::Builder & SubscribeRequestMessage::Builder::EndOfSubscribeRequestMessage()
+CHIP_ERROR SubscribeRequestMessage::Builder::EndOfSubscribeRequestMessage()
 {
     if (mError == CHIP_NO_ERROR)
     {
@@ -271,7 +271,7 @@ SubscribeRequestMessage::Builder & SubscribeRequestMessage::Builder::EndOfSubscr
     {
         EndOfContainer();
     }
-    return *this;
+    return GetError();
 }
 } // namespace app
 } // namespace chip

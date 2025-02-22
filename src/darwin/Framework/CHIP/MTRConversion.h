@@ -19,6 +19,9 @@
 
 #import <Foundation/Foundation.h>
 
+#include <chrono>
+#include <lib/core/CASEAuthTag.h>
+#include <lib/core/CHIPError.h>
 #include <lib/core/Optional.h>
 #include <lib/support/TimeUtils.h>
 #include <type_traits>
@@ -33,9 +36,40 @@ AsNumber(chip::Optional<T> optional)
     return (optional.HasValue()) ? @(optional.Value()) : nil;
 }
 
-inline NSDate * ChipEpochSecondsAsDate(uint32_t chipEpochSeconds)
+inline NSDate * MatterEpochSecondsAsDate(uint32_t matterEpochSeconds)
 {
-    return [NSDate dateWithTimeIntervalSince1970:(chip::kChipEpochSecondsSinceUnixEpoch + (NSTimeInterval) chipEpochSeconds)];
+    const auto interval = static_cast<uint64_t>(chip::kChipEpochSecondsSinceUnixEpoch) + static_cast<uint64_t>(matterEpochSeconds);
+    return [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval) interval];
 }
+
+template <typename Rep, typename Period>
+inline NSTimeInterval DurationToTimeInterval(std::chrono::duration<Rep, Period> duration)
+{
+    return std::chrono::duration<NSTimeInterval>(duration).count();
+}
+
+/**
+ * Returns whether the conversion could be performed.  Will return false if the
+ * passed-in date is our of the range representable as a Matter epoch-s value.
+ */
+bool DateToMatterEpochSeconds(NSDate * date, uint32_t & epoch);
+
+/**
+ * Returns whether the conversion could be performed.  Will return false if the
+ * passed-in date is our of the range representable as a Matter epoch-s value.
+ */
+bool DateToMatterEpochMilliseconds(NSDate * date, uint64_t & matterEpochMilliseconds);
+
+/**
+ * Returns whether the conversion could be performed.  Will return false if the
+ * passed-in date is our of the range representable as a Matter epoch-s value.
+ */
+bool DateToMatterEpochMicroseconds(NSDate * date, uint64_t & matterEpochMicroseconds);
+
+/**
+ * Utilities for converting between NSSet<NSNumber *> and chip::CATValues.
+ */
+CHIP_ERROR SetToCATValues(NSSet<NSNumber *> * catSet, chip::CATValues & values);
+NSSet<NSNumber *> * CATValuesToSet(const chip::CATValues & values);
 
 NS_ASSUME_NONNULL_END

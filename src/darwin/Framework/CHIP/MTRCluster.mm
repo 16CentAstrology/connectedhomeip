@@ -23,23 +23,41 @@
 using namespace ::chip;
 
 @implementation MTRCluster
-- (instancetype)initWithQueue:(dispatch_queue_t)queue
+- (instancetype)initWithEndpointID:(NSNumber *)endpointID queue:(dispatch_queue_t)queue;
 {
     if (self = [super init]) {
+        // TODO consider range-checking the incoming number to make sure it's
+        // actually in the EndpointId range
+        _endpointID = endpointID;
         _callbackQueue = queue;
     }
     return self;
 }
 
-- (chip::ByteSpan)asByteSpan:(NSData *)value
+@end
+
+@implementation MTRGenericBaseCluster
+
+- (instancetype)initWithDevice:(MTRBaseDevice *)device endpointID:(NSNumber *)endpointID queue:(dispatch_queue_t)queue
 {
-    return AsByteSpan(value);
+    if (self = [super initWithEndpointID:endpointID queue:queue]) {
+        _device = device;
+    }
+    return self;
 }
 
-- (chip::CharSpan)asCharSpan:(NSString *)value
+@end
+
+@implementation MTRGenericCluster
+
+- (instancetype)initWithDevice:(MTRDevice *)device endpointID:(NSNumber *)endpointID queue:(dispatch_queue_t)queue
 {
-    return AsCharSpan(value);
+    if (self = [super initWithEndpointID:endpointID queue:queue]) {
+        _device = device;
+    }
+    return self;
 }
+
 @end
 
 @implementation MTRWriteParams
@@ -51,12 +69,46 @@ using namespace ::chip;
     return self;
 }
 
+#pragma mark - Copying
+
 - (id)copyWithZone:(NSZone * _Nullable)zone
 {
     auto other = [[MTRWriteParams alloc] init];
     other.timedWriteTimeout = self.timedWriteTimeout;
     other.dataVersion = self.dataVersion;
     return other;
+}
+
+#pragma mark - Coding
+
++ (BOOL)supportsSecureCoding
+{
+    return YES;
+}
+
+static NSString * sTimedWriteTimeoutCodingKey = @"sTimedWriteTimeoutKey";
+static NSString * sDataVersionCodingKey = @"sDataVersionKey";
+
+- (nullable instancetype)initWithCoder:(NSCoder *)decoder
+{
+    self = [super init];
+
+    if (self == nil) {
+        return nil;
+    }
+
+    self.timedWriteTimeout = [decoder decodeObjectOfClass:[NSNumber class] forKey:sTimedWriteTimeoutCodingKey];
+    self.dataVersion = [decoder decodeObjectOfClass:[NSNumber class] forKey:sDataVersionCodingKey];
+
+    return self;
+}
+
+- (void)encodeWithCoder:(NSCoder *)coder
+{
+    if (self.timedWriteTimeout)
+        [coder encodeObject:self.timedWriteTimeout forKey:sTimedWriteTimeoutCodingKey];
+    if (self.dataVersion)
+        [coder encodeObject:self.dataVersion forKey:sDataVersionCodingKey];
 }
 
 @end
@@ -66,17 +118,58 @@ using namespace ::chip;
 {
     if (self = [super init]) {
         _filterByFabric = YES;
+        _assumeUnknownAttributesReportable = YES;
     }
     return self;
 }
+
+#pragma mark - Coding
+
++ (BOOL)supportsSecureCoding
+{
+    return YES;
+}
+
+static NSString * sFilterByFabricCoderKey = @"sFilterByFabricKey";
+static NSString * sMinEventNumberCoderKey = @"sMinEventNumberKey";
+static NSString * sAssumeUnknownAttributesReportableCoderKey = @"sAssumeUnknownAttributesReportableKey";
+
+- (nullable instancetype)initWithCoder:(NSCoder *)decoder
+{
+    self = [super init];
+
+    if (self == nil) {
+        return nil;
+    }
+
+    self.filterByFabric = [decoder decodeBoolForKey:sFilterByFabricCoderKey];
+    self.assumeUnknownAttributesReportable = [decoder decodeBoolForKey:sAssumeUnknownAttributesReportableCoderKey];
+    self.minEventNumber = [decoder decodeObjectOfClass:[NSNumber class] forKey:sMinEventNumberCoderKey];
+
+    return self;
+}
+
+- (void)encodeWithCoder:(NSCoder *)coder
+{
+    [coder encodeBool:self.filterByFabric forKey:sFilterByFabricCoderKey];
+    [coder encodeBool:self.assumeUnknownAttributesReportable forKey:sAssumeUnknownAttributesReportableCoderKey];
+
+    if (self.minEventNumber)
+        [coder encodeObject:self.minEventNumber forKey:sMinEventNumberCoderKey];
+}
+
+#pragma mark - Copying
 
 - (id)copyWithZone:(NSZone * _Nullable)zone
 {
     auto other = [[MTRReadParams alloc] init];
     other.filterByFabric = self.filterByFabric;
     other.minEventNumber = self.minEventNumber;
+    other.assumeUnknownAttributesReportable = self.assumeUnknownAttributesReportable;
     return other;
 }
+
+#pragma mark - Other
 
 - (void)toReadPrepareParams:(chip::app::ReadPrepareParams &)readPrepareParams
 {
@@ -101,16 +194,67 @@ using namespace ::chip;
     return self;
 }
 
+#pragma mark - Copying
 - (id)copyWithZone:(NSZone * _Nullable)zone
 {
     auto other = [[MTRSubscribeParams alloc] initWithMinInterval:self.minInterval maxInterval:self.maxInterval];
+
     other.filterByFabric = self.filterByFabric;
     other.minEventNumber = self.minEventNumber;
+    other.assumeUnknownAttributesReportable = self.assumeUnknownAttributesReportable;
     other.replaceExistingSubscriptions = self.replaceExistingSubscriptions;
     other.reportEventsUrgently = self.reportEventsUrgently;
     other.resubscribeAutomatically = self.resubscribeAutomatically;
+    other.minInterval = self.minInterval;
+    other.maxInterval = self.maxInterval;
+
     return other;
 }
+
+#pragma mark - Coding
++ (BOOL)supportsSecureCoding
+{
+    return YES;
+}
+
+static NSString * sReplaceExistingSubscriptionsCoderKey = @"sFilterByFabricKey";
+static NSString * sReportEventsUrgentlyCoderKey = @"sMinEventNumberKey";
+static NSString * sResubscribeAutomaticallyCoderKey = @"sAssumeUnknownAttributesReportableKey";
+static NSString * sMinIntervalKeyCoderKey = @"sMinIntervalKeyKey";
+static NSString * sMaxIntervalKeyCoderKey = @"sMaxIntervalKeyKey";
+
+- (nullable instancetype)initWithCoder:(NSCoder *)decoder
+{
+    self = [super initWithCoder:decoder];
+
+    if (self == nil) {
+        return nil;
+    }
+
+    self.replaceExistingSubscriptions = [decoder decodeBoolForKey:sReplaceExistingSubscriptionsCoderKey];
+    self.reportEventsUrgently = [decoder decodeBoolForKey:sReportEventsUrgentlyCoderKey];
+    self.resubscribeAutomatically = [decoder decodeBoolForKey:sResubscribeAutomaticallyCoderKey];
+    self.minInterval = [decoder decodeObjectOfClass:[NSNumber class] forKey:sMinIntervalKeyCoderKey];
+    self.maxInterval = [decoder decodeObjectOfClass:[NSNumber class] forKey:sMaxIntervalKeyCoderKey];
+
+    return self;
+}
+
+- (void)encodeWithCoder:(NSCoder *)coder
+{
+    [super encodeWithCoder:coder];
+
+    [coder encodeBool:self.replaceExistingSubscriptions forKey:sReplaceExistingSubscriptionsCoderKey];
+    [coder encodeBool:self.reportEventsUrgently forKey:sReportEventsUrgentlyCoderKey];
+    [coder encodeBool:self.resubscribeAutomatically forKey:sResubscribeAutomaticallyCoderKey];
+
+    if (self.minInterval)
+        [coder encodeObject:self.minInterval forKey:sMinIntervalKeyCoderKey];
+    if (self.maxInterval)
+        [coder encodeObject:self.maxInterval forKey:sMaxIntervalKeyCoderKey];
+}
+
+#pragma mark - Main
 
 - (void)toReadPrepareParams:(chip::app::ReadPrepareParams &)readPrepareParams
 {

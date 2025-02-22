@@ -59,6 +59,7 @@ static_library("webos") {
   sources = [
     "../DeviceSafeQueue.cpp",
     "../DeviceSafeQueue.h",
+    "../GLibTypeDeleter.h",
     "../SingletonConfigurationManager.cpp",
     "BLEManagerImpl.cpp",
     "BLEManagerImpl.h",
@@ -85,7 +86,6 @@ static_library("webos") {
     "InetPlatformConfig.h",
     "KeyValueStoreManagerImpl.cpp",
     "KeyValueStoreManagerImpl.h",
-    "Logging.cpp",
     "MainLoop.cpp",
     "MainLoop.h",
     "NetworkCommissioningDriver.h",
@@ -99,7 +99,11 @@ static_library("webos") {
     "SystemTimeSupport.cpp",
   ]
 
-  deps = [ "${chip_root}/src/setup_payload" ]
+  deps = [
+    "${chip_root}/src/app:app_config",
+    "${chip_root}/src/platform/logging:headers",
+    "${chip_root}/src/setup_payload",
+  ]
 
   public_deps = [
     "${chip_root}/src/app/common:cluster-objects",
@@ -126,11 +130,11 @@ static_library("webos") {
 
   if (chip_enable_openthread) {
     sources += [
-      "GlibTypeDeleter.h",
       "ThreadStackManagerImpl.cpp",
       "ThreadStackManagerImpl.h",
     ]
 
+    deps += [ "${chip_root}/src/app:app_config" ]
     public_deps += [ "dbus/openthread" ]
   }
 
@@ -149,4 +153,12 @@ static_library("webos") {
     "pbnjson_c",
     "pbnjson_cpp",
   ]
+}
+
+source_set("logging") {
+  deps = [
+    "${chip_root}/src/platform:platform_base",
+    "${chip_root}/src/platform/logging:headers",
+  ]
+  sources = [ "Logging.cpp" ]
 }

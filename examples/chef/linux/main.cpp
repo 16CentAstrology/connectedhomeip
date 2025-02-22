@@ -18,33 +18,16 @@
 
 #include <AppMain.h>
 
+#include <ChipShellCollection.h>
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app/ConcreteAttributePath.h>
-#include <app/clusters/network-commissioning/network-commissioning.h>
-#include <lib/support/logging/CHIPLogging.h>
-#include <platform/Linux/NetworkCommissioningDriver.h>
-
 #include <lib/shell/Engine.h>
-
-#include <ChipShellCollection.h>
+#include <lib/support/logging/CHIPLogging.h>
 
 using namespace chip;
 using namespace chip::Shell;
 using namespace chip::app;
-
-#if CHIP_DEVICE_CONFIG_ENABLE_WPA
-namespace {
-DeviceLayer::NetworkCommissioning::LinuxWiFiDriver sLinuxWiFiDriver;
-Clusters::NetworkCommissioning::Instance sWiFiNetworkCommissioningInstance(0, &sLinuxWiFiDriver);
-} // namespace
-#endif
-
-void ApplicationInit()
-{
-#if CHIP_DEVICE_CONFIG_ENABLE_WPA
-    sWiFiNetworkCommissioningInstance.Init();
-#endif
-}
+using namespace chip::app::Clusters;
 
 int main(int argc, char * argv[])
 {

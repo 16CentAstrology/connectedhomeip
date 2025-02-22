@@ -24,27 +24,26 @@
  */
 
 #include <stdbool.h> // For bool
-#include <stddef.h>  // For NULL.
 #include <stdint.h>  // For various uint*_t types
 
-#include <app/util/af-enums.h>
+#include <app/util/AttributesChangedListener.h>
+#include <app/util/MarkAttributeDirty.h>
 #include <app/util/basic-types.h>
 #include <app/util/types_stub.h> // For various types.
 
 #include <app/util/attribute-metadata.h> // EmberAfAttributeMetadata
 
+#include <app/AttributePathParams.h>
 #include <app/ConcreteAttributePath.h>
+#include <app/data-model-provider/MetadataTypes.h>
 #include <app/data-model/Nullable.h>
 #include <lib/core/DataModelTypes.h>
 #include <lib/support/Variant.h>
 #include <messaging/ExchangeContext.h>
 
 #include <app-common/zap-generated/cluster-enums.h>
-
-/**
- * @brief Type for the cluster mask
- */
-typedef uint8_t EmberAfClusterMask;
+#include <app-common/zap-generated/cluster-objects.h>
+#include <protocols/interaction_model/StatusCode.h>
 
 /**
  * @brief Generic function type, used for either of the cluster function.
@@ -58,12 +57,27 @@ typedef void (*EmberAfGenericClusterFunction)(void);
  * @brief A distinguished manufacturer code that is used to indicate the
  * absence of a manufacturer-specific cluster, command, or attribute.
  */
-#define EMBER_AF_NULL_MANUFACTURER_CODE 0x0000
+#define MATTER_DM_NULL_MANUFACTURER_CODE 0x0000
+
+// The following define names are relevant to the ZAP_CLUSTER_MASK macro.
+#define MATTER_CLUSTER_FLAG_INIT_FUNCTION 0x01
+#define MATTER_CLUSTER_FLAG_ATTRIBUTE_CHANGED_FUNCTION 0x02
+// Bit 2 (0x04)  and Bit3 (0x08) are free.
+#define MATTER_CLUSTER_FLAG_SHUTDOWN_FUNCTION 0x10
+#define MATTER_CLUSTER_FLAG_PRE_ATTRIBUTE_CHANGED_FUNCTION 0x20
+#define MATTER_CLUSTER_FLAG_SERVER 0x40
+#define MATTER_CLUSTER_FLAG_CLIENT 0x80
+
+/**
+ * @brief Type for the cluster mask
+ *  Value of the mask represents a single, or aggregated, MATTER_CLUSTER_FLAG_X
+ */
+typedef uint8_t EmberAfClusterMask;
 
 /**
  * @brief Struct describing cluster
  */
-typedef struct
+struct EmberAfCluster
 {
     /**
      *  ID of cluster according to ZCL spec
@@ -116,17 +130,13 @@ typedef struct
      * Total number of events supported by the cluster instance (in eventList array).
      */
     uint16_t eventCount;
-} EmberAfCluster;
 
-/**
- * @brief Struct that represents a logical device type consisting
- * of a DeviceID and its version.
- */
-typedef struct
-{
-    chip::DeviceTypeId deviceId;
-    uint8_t deviceVersion;
-} EmberAfDeviceType;
+    bool IsServer() const { return (mask & MATTER_CLUSTER_FLAG_SERVER) != 0; }
+
+    bool IsClient() const { return (mask & MATTER_CLUSTER_FLAG_CLIENT) != 0; }
+};
+
+using EmberAfDeviceType = chip::app::DataModel::DeviceTypeEntry;
 
 /**
  * @brief Struct used to find an attribute in storage. Together the elements
@@ -181,14 +191,11 @@ typedef struct
     uint16_t endpointSize;
 } EmberAfEndpointType;
 
-#ifdef DOXYGEN_SHOULD_SKIP_THIS
-enum EmberAfEndpointBitmask;
-#else
-typedef uint8_t EmberAfEndpointBitmask;
-enum
-#endif
-{ EMBER_AF_ENDPOINT_DISABLED = 0x00,
-  EMBER_AF_ENDPOINT_ENABLED  = 0x01,
+enum class EmberAfEndpointOptions : uint8_t
+{
+    isEnabled         = 0x1,
+    isFlatComposition = 0x2,
+    isTreeComposition = 0x3,
 };
 
 /**
@@ -209,7 +216,7 @@ struct EmberAfDefinedEndpoint
     /**
      * Meta-data about the endpoint
      */
-    EmberAfEndpointBitmask bitmask = EMBER_AF_ENDPOINT_DISABLED;
+    chip::BitMask<EmberAfEndpointOptions> bitmask;
     /**
      * Endpoint type for this endpoint.
      */
@@ -224,31 +231,12 @@ struct EmberAfDefinedEndpoint
      * Root endpoint id for composed device type.
      */
     chip::EndpointId parentEndpointId = chip::kInvalidEndpointId;
+
+    /**
+     * Span pointing to a list of tags. Lifetime has to outlive usage, and data is owned by callers.
+     */
+    chip::Span<const chip::app::Clusters::Descriptor::Structs::SemanticTagStruct::Type> tagList;
 };
-
-// Cluster specific types
-
-/**
- * @brief Indicates the absence of a Scene table entry.
- */
-#define EMBER_AF_SCENE_TABLE_NULL_INDEX 0xFF
-/**
- * @brief Value used when setting or getting the endpoint in a Scene table
- * entry.  It indicates that the entry is not in use.
- */
-#define EMBER_AF_SCENE_TABLE_UNUSED_ENDPOINT_ID 0x00
-/**
- * @brief Maximum length of Scene names, not including the length byte.
- */
-#define ZCL_SCENES_CLUSTER_MAXIMUM_NAME_LENGTH 16
-/**
- * @brief The group identifier for the global scene.
- */
-#define ZCL_SCENES_GLOBAL_SCENE_GROUP_ID 0x0000
-/**
- * @brief The scene identifier for the global scene.
- */
-#define ZCL_SCENES_GLOBAL_SCENE_SCENE_ID 0x00
 
 /**
  * @brief Type for referring to the tick callback for cluster.
@@ -287,9 +275,8 @@ typedef void (*EmberAfClusterAttributeChangedCallback)(const chip::app::Concrete
  *
  * This function is called before an attribute changes.
  */
-typedef EmberAfStatus (*EmberAfClusterPreAttributeChangedCallback)(const chip::app::ConcreteAttributePath & attributePath,
-                                                                   EmberAfAttributeType attributeType, uint16_t size,
-                                                                   uint8_t * value);
+typedef chip::Protocols::InteractionModel::Status (*EmberAfClusterPreAttributeChangedCallback)(
+    const chip::app::ConcreteAttributePath & attributePath, EmberAfAttributeType attributeType, uint16_t size, uint8_t * value);
 
 #define MAX_INT32U_VALUE (0xFFFFFFFFUL)
 #define MAX_INT16U_VALUE (0xFFFF)

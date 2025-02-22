@@ -80,26 +80,20 @@ struct CopyAndAdjustDeltaTimeContext
     EventLoadOutContext * mpContext = nullptr;
 };
 
-void EventManagement::Init(Messaging::ExchangeManager * apExchangeManager, uint32_t aNumBuffers,
-                           CircularEventBuffer * apCircularEventBuffer, const LogStorageResources * const apLogStorageResources,
-                           MonotonicallyIncreasingCounter<EventNumber> * apEventNumberCounter,
-                           System::Clock::Milliseconds64 aMonotonicStartupTime)
+CHIP_ERROR EventManagement::Init(Messaging::ExchangeManager * apExchangeManager, uint32_t aNumBuffers,
+                                 CircularEventBuffer * apCircularEventBuffer,
+                                 const LogStorageResources * const apLogStorageResources,
+                                 MonotonicallyIncreasingCounter<EventNumber> * apEventNumberCounter,
+                                 System::Clock::Milliseconds64 aMonotonicStartupTime, EventReporter * apEventReporter)
 {
+    VerifyOrReturnError(apEventReporter != nullptr, CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(aNumBuffers != 0, CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(mState == EventManagementStates::Shutdown, CHIP_ERROR_INCORRECT_STATE);
+
     CircularEventBuffer * current = nullptr;
     CircularEventBuffer * prev    = nullptr;
     CircularEventBuffer * next    = nullptr;
 
-    if (aNumBuffers == 0)
-    {
-        ChipLogError(EventLogging, "Invalid aNumBuffers");
-        return;
-    }
-
-    if (mState != EventManagementStates::Shutdown)
-    {
-        ChipLogError(EventLogging, "Invalid EventManagement State");
-        return;
-    }
     mpExchangeMgr = apExchangeManager;
 
     for (uint32_t bufferIndex = 0; bufferIndex < aNumBuffers; bufferIndex++)
@@ -124,6 +118,10 @@ void EventManagement::Init(Messaging::ExchangeManager * apExchangeManager, uint3
     mBytesWritten = 0;
 
     mMonotonicStartupTime = aMonotonicStartupTime;
+
+    mpEventReporter = apEventReporter;
+
+    return CHIP_NO_ERROR;
 }
 
 CHIP_ERROR EventManagement::CopyToNextBuffer(CircularEventBuffer * apEventBuffer)
@@ -173,7 +171,7 @@ CHIP_ERROR EventManagement::EnsureSpaceInCircularBuffer(size_t aRequiredSpace, P
 
     // Check that we have this much space in all our event buffers that might
     // hold the event. If we do not, that will prevent the event from being
-    // properly evicted into higher-priority bufers.  We want to discover
+    // properly evicted into higher-priority buffers. We want to discover
     // this early, so that testing surfaces the need to make those buffers
     // larger.
     for (auto * currentBuffer = mpEventBuffer; currentBuffer; currentBuffer = currentBuffer->GetNextCircularEventBuffer())
@@ -184,6 +182,8 @@ CHIP_ERROR EventManagement::EnsureSpaceInCircularBuffer(size_t aRequiredSpace, P
             break;
         }
     }
+
+    VerifyOrExit(eventBuffer != nullptr, err = CHIP_ERROR_INCORRECT_STATE);
 
     // check whether we actually need to do anything, exit if we don't
     VerifyOrExit(requiredSpace > eventBuffer->AvailableDataLength(), err = CHIP_NO_ERROR);
@@ -299,11 +299,11 @@ CHIP_ERROR EventManagement::ConstructEvent(EventLoadOutContext * apContext, Even
     EventPathIB::Builder & eventPathBuilder = eventDataIBBuilder.CreatePath();
     ReturnErrorOnFailure(eventDataIBBuilder.GetError());
 
-    eventPathBuilder.Endpoint(apOptions->mPath.mEndpointId)
-        .Cluster(apOptions->mPath.mClusterId)
-        .Event(apOptions->mPath.mEventId)
-        .EndOfEventPathIB();
-    ReturnErrorOnFailure(eventPathBuilder.GetError());
+    CHIP_ERROR err = eventPathBuilder.Endpoint(apOptions->mPath.mEndpointId)
+                         .Cluster(apOptions->mPath.mClusterId)
+                         .Event(apOptions->mPath.mEventId)
+                         .EndOfEventPathIB();
+    ReturnErrorOnFailure(err);
     eventDataIBBuilder.EventNumber(apContext->mCurrentEventNumber).Priority(chip::to_underlying(apContext->mPriority));
     ReturnErrorOnFailure(eventDataIBBuilder.GetError());
 
@@ -328,10 +328,8 @@ CHIP_ERROR EventManagement::ConstructEvent(EventLoadOutContext * apContext, Even
     {
         apContext->mWriter.Put(TLV::ProfileTag(kEventManagementProfile, kFabricIndexTag), apOptions->mFabricIndex);
     }
-    eventDataIBBuilder.EndOfEventDataIB();
-    ReturnErrorOnFailure(eventDataIBBuilder.GetError());
-    eventReportBuilder.EndOfEventReportIB();
-    ReturnErrorOnFailure(eventReportBuilder.GetError());
+    ReturnErrorOnFailure(eventDataIBBuilder.EndOfEventDataIB());
+    ReturnErrorOnFailure(eventReportBuilder.EndOfEventReportIB());
     ReturnErrorOnFailure(apContext->mWriter.Finalize());
     apContext->mFirst = false;
     return CHIP_NO_ERROR;
@@ -345,7 +343,7 @@ void EventManagement::CreateEventManagement(Messaging::ExchangeManager * apExcha
 {
 
     sInstance.Init(apExchangeManager, aNumBuffers, apCircularEventBuffer, apLogStorageResources, apEventNumberCounter,
-                   aMonotonicStartupTime);
+                   aMonotonicStartupTime, &InteractionModelEngine::GetInstance()->GetReportingEngine());
 }
 
 /**
@@ -413,6 +411,7 @@ void EventManagement::VendEventNumber()
 CHIP_ERROR EventManagement::LogEvent(EventLoggingDelegate * apDelegate, const EventOptions & aEventOptions,
                                      EventNumber & aEventNumber)
 {
+    assertChipStackLockedByCurrentThread();
     VerifyOrReturnError(mState != EventManagementStates::Shutdown, CHIP_ERROR_INCORRECT_STATE);
     return LogEventPrivate(apDelegate, aEventOptions, aEventNumber);
 }
@@ -489,7 +488,7 @@ exit:
                       opts.mTimestamp.mType == Timestamp::Type::kSystem ? "Sys" : "Epoch", ChipLogValueX64(opts.mTimestamp.mValue));
 #endif // CHIP_CONFIG_EVENT_LOGGING_VERBOSE_DEBUG_LOGS
 
-        err = InteractionModelEngine::GetInstance()->GetReportingEngine().ScheduleEventDelivery(opts.mPath, mBytesWritten);
+        err = mpEventReporter->NewEventGenerated(opts.mPath, mBytesWritten);
     }
 
     return err;
@@ -553,13 +552,18 @@ CHIP_ERROR EventManagement::CheckEventContext(EventLoadOutContext * eventLoadOut
 
     ReturnErrorOnFailure(ret);
 
-    Access::RequestPath requestPath{ .cluster = event.mClusterId, .endpoint = event.mEndpointId };
+    Access::RequestPath requestPath{ .cluster     = event.mClusterId,
+                                     .endpoint    = event.mEndpointId,
+                                     .requestType = Access::RequestType::kEventReadRequest,
+                                     .entityId    = event.mEventId };
     Access::Privilege requestPrivilege = RequiredPrivilege::ForReadEvent(path);
     CHIP_ERROR accessControlError =
         Access::GetAccessControl().Check(eventLoadOutContext->mSubjectDescriptor, requestPath, requestPrivilege);
     if (accessControlError != CHIP_NO_ERROR)
     {
-        ReturnErrorCodeIf(accessControlError != CHIP_ERROR_ACCESS_DENIED, accessControlError);
+        VerifyOrReturnError((accessControlError == CHIP_ERROR_ACCESS_DENIED) ||
+                                (accessControlError == CHIP_ERROR_ACCESS_RESTRICTED_BY_ARL),
+                            accessControlError);
         ret = CHIP_ERROR_UNEXPECTED_EVENT;
     }
 
@@ -638,7 +642,7 @@ CHIP_ERROR EventManagement::CopyEventsSince(const TLVReader & aReader, size_t aD
     return err;
 }
 
-CHIP_ERROR EventManagement::FetchEventsSince(TLVWriter & aWriter, const ObjectList<EventPathParams> * apEventPathList,
+CHIP_ERROR EventManagement::FetchEventsSince(TLVWriter & aWriter, const SingleLinkedListNode<EventPathParams> * apEventPathList,
                                              EventNumber & aEventMin, size_t & aEventCount,
                                              const Access::SubjectDescriptor & aSubjectDescriptor)
 {
@@ -849,6 +853,12 @@ void EventManagement::SetScheduledEventInfo(EventNumber & aEventNumber, uint32_t
     aInitialWrittenEventBytes = mBytesWritten;
 }
 
+CHIP_ERROR EventManagement::GenerateEvent(EventLoggingDelegate * eventPayloadWriter, const EventOptions & options,
+                                          EventNumber & generatedEventNumber)
+{
+    return LogEvent(eventPayloadWriter, options, generatedEventNumber);
+}
+
 void CircularEventBuffer::Init(uint8_t * apBuffer, uint32_t aBufferLength, CircularEventBuffer * apPrev,
                                CircularEventBuffer * apNext, PriorityLevel aPriorityLevel)
 {
@@ -908,5 +918,6 @@ CHIP_ERROR CircularEventBufferWrapper::GetNextBuffer(TLVReader & aReader, const 
 exit:
     return err;
 }
+
 } // namespace app
 } // namespace chip

@@ -21,15 +21,21 @@
 #include <lib/support/SafeInt.h>
 #include <lib/support/jsontlv/TlvJson.h>
 
-constexpr const char * kClusterIdKey      = "clusterId";
-constexpr const char * kEndpointIdKey     = "endpointId";
-constexpr const char * kAttributeIdKey    = "attributeId";
-constexpr const char * kEventIdKey        = "eventId";
-constexpr const char * kCommandIdKey      = "commandId";
-constexpr const char * kErrorIdKey        = "error";
-constexpr const char * kClusterErrorIdKey = "clusterError";
-constexpr const char * kValueKey          = "value";
-constexpr const char * kNodeIdKey         = "nodeId";
+constexpr char kEventNumberKey[]    = "eventNumber";
+constexpr char kDataVersionKey[]    = "dataVersion";
+constexpr char kClusterIdKey[]      = "clusterId";
+constexpr char kEndpointIdKey[]     = "endpointId";
+constexpr char kAttributeIdKey[]    = "attributeId";
+constexpr char kEventIdKey[]        = "eventId";
+constexpr char kCommandIdKey[]      = "commandId";
+constexpr char kErrorIdKey[]        = "error";
+constexpr char kClusterErrorIdKey[] = "clusterError";
+constexpr char kValueKey[]          = "value";
+constexpr char kNodeIdKey[]         = "nodeId";
+constexpr char kNOCKey[]            = "NOC";
+constexpr char kICACKey[]           = "ICAC";
+constexpr char kRCACKey[]           = "RCAC";
+constexpr char kIPKKey[]            = "IPK";
 
 namespace {
 RemoteDataModelLoggerDelegate * gDelegate;
@@ -53,6 +59,7 @@ CHIP_ERROR LogError(Json::Value & value, const chip::app::StatusIB & status)
     auto valueStr = chip::JsonToString(value);
     return gDelegate->LogJSON(valueStr.c_str());
 }
+
 } // namespace
 
 namespace RemoteDataModelLogger {
@@ -64,6 +71,10 @@ CHIP_ERROR LogAttributeAsJSON(const chip::app::ConcreteDataAttributePath & path,
     value[kClusterIdKey]   = path.mClusterId;
     value[kEndpointIdKey]  = path.mEndpointId;
     value[kAttributeIdKey] = path.mAttributeId;
+    if (path.mDataVersion.HasValue())
+    {
+        value[kDataVersionKey] = path.mDataVersion.Value();
+    }
 
     chip::TLV::TLVReader reader;
     reader.Init(*data);
@@ -119,9 +130,10 @@ CHIP_ERROR LogEventAsJSON(const chip::app::EventHeader & header, chip::TLV::TLVR
     VerifyOrReturnError(gDelegate != nullptr, CHIP_NO_ERROR);
 
     Json::Value value;
-    value[kClusterIdKey]  = header.mPath.mClusterId;
-    value[kEndpointIdKey] = header.mPath.mEndpointId;
-    value[kEventIdKey]    = header.mPath.mEventId;
+    value[kClusterIdKey]   = header.mPath.mClusterId;
+    value[kEndpointIdKey]  = header.mPath.mEndpointId;
+    value[kEventIdKey]     = header.mPath.mEventId;
+    value[kEventNumberKey] = header.mEventNumber;
 
     chip::TLV::TLVReader reader;
     reader.Init(*data);
@@ -148,8 +160,7 @@ CHIP_ERROR LogErrorAsJSON(const CHIP_ERROR & error)
     VerifyOrReturnError(gDelegate != nullptr, CHIP_NO_ERROR);
 
     Json::Value value;
-    chip::app::StatusIB status;
-    status.InitFromChipError(error);
+    chip::app::StatusIB status(error);
     return LogError(value, status);
 }
 
@@ -165,12 +176,39 @@ CHIP_ERROR LogGetCommissionerNodeId(chip::NodeId value)
     return gDelegate->LogJSON(valueStr.c_str());
 }
 
-CHIP_ERROR LogDiscoveredNodeData(const chip::Dnssd::DiscoveredNodeData & nodeData)
+CHIP_ERROR LogGetCommissionerRootCertificate(const char * value)
 {
     VerifyOrReturnError(gDelegate != nullptr, CHIP_NO_ERROR);
 
-    auto & resolutionData = nodeData.resolutionData;
-    auto & commissionData = nodeData.commissionData;
+    Json::Value rootValue;
+    rootValue[kValueKey]           = Json::Value();
+    rootValue[kValueKey][kRCACKey] = value;
+
+    auto valueStr = chip::JsonToString(rootValue);
+    return gDelegate->LogJSON(valueStr.c_str());
+}
+
+CHIP_ERROR LogIssueNOCChain(const char * noc, const char * icac, const char * rcac, const char * ipk)
+{
+    VerifyOrReturnError(gDelegate != nullptr, CHIP_NO_ERROR);
+
+    Json::Value rootValue;
+    rootValue[kValueKey]           = Json::Value();
+    rootValue[kValueKey][kNOCKey]  = noc;
+    rootValue[kValueKey][kICACKey] = icac;
+    rootValue[kValueKey][kRCACKey] = rcac;
+    rootValue[kValueKey][kIPKKey]  = ipk;
+
+    auto valueStr = chip::JsonToString(rootValue);
+    return gDelegate->LogJSON(valueStr.c_str());
+}
+
+CHIP_ERROR LogDiscoveredNodeData(const chip::Dnssd::CommissionNodeData & nodeData)
+{
+    VerifyOrReturnError(gDelegate != nullptr, CHIP_NO_ERROR);
+
+    auto & commissionData = nodeData;
+    auto & resolutionData = commissionData;
 
     if (!chip::CanCastTo<uint8_t>(resolutionData.numIPs))
     {
@@ -202,18 +240,29 @@ CHIP_ERROR LogDiscoveredNodeData(const chip::Dnssd::DiscoveredNodeData & nodeDat
     value["rotatingIdLen"]      = static_cast<uint64_t>(commissionData.rotatingIdLen);
     value["pairingHint"]        = commissionData.pairingHint;
     value["pairingInstruction"] = commissionData.pairingInstruction;
-    value["supportsTcp"]        = resolutionData.supportsTcp;
+    value["supportsTcpClient"]  = resolutionData.supportsTcpClient;
+    value["supportsTcpServer"]  = resolutionData.supportsTcpServer;
     value["port"]               = resolutionData.port;
     value["numIPs"]             = static_cast<uint8_t>(resolutionData.numIPs);
 
-    if (resolutionData.mrpRetryIntervalIdle.HasValue())
+    if (resolutionData.mrpRetryIntervalIdle.has_value())
     {
-        value["mrpRetryIntervalIdle"] = resolutionData.mrpRetryIntervalIdle.Value().count();
+        value["mrpRetryIntervalIdle"] = resolutionData.mrpRetryIntervalIdle->count();
     }
 
-    if (resolutionData.mrpRetryIntervalActive.HasValue())
+    if (resolutionData.mrpRetryIntervalActive.has_value())
     {
-        value["mrpRetryIntervalActive"] = resolutionData.mrpRetryIntervalActive.Value().count();
+        value["mrpRetryIntervalActive"] = resolutionData.mrpRetryIntervalActive->count();
+    }
+
+    if (resolutionData.mrpRetryActiveThreshold.has_value())
+    {
+        value["mrpRetryActiveThreshold"] = resolutionData.mrpRetryActiveThreshold->count();
+    }
+
+    if (resolutionData.isICDOperatingAsLIT.has_value())
+    {
+        value["isICDOperatingAsLIT"] = *(resolutionData.isICDOperatingAsLIT);
     }
 
     Json::Value rootValue;

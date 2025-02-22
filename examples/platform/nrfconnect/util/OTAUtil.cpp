@@ -23,7 +23,9 @@
 #include <app/clusters/ota-requestor/DefaultOTARequestorDriver.h>
 #include <app/clusters/ota-requestor/DefaultOTARequestorStorage.h>
 #include <app/server/Server.h>
+#include <platform/CHIPDeviceLayer.h>
 #include <platform/nrfconnect/OTAImageProcessorImpl.h>
+#include <zephyr/dfu/mcuboot.h>
 #endif
 
 using namespace chip;
@@ -43,7 +45,7 @@ chip::DefaultOTARequestor sOTARequestor;
 OTAImageProcessorImpl & GetOTAImageProcessor()
 {
 #if CONFIG_PM_DEVICE && CONFIG_NORDIC_QSPI_NOR
-    static OTAImageProcessorImpl sOTAImageProcessor(&GetFlashHandler());
+    static OTAImageProcessorImpl sOTAImageProcessor(ExternalFlashManager.GetInstance());
 #else
     static OTAImageProcessorImpl sOTAImageProcessor;
 #endif
@@ -63,10 +65,31 @@ void InitBasicOTARequestor()
     sOTARequestorDriver.Init(&sOTARequestor, &imageProcessor);
     imageProcessor.TriggerFlashAction(ExternalFlashManager::Action::SLEEP);
 }
+
+void OtaConfirmNewImage()
+{
+#ifndef CONFIG_SOC_SERIES_NRF53X
+    /* Check if the image is run in the REVERT mode and eventually
+    confirm it to prevent reverting on the next boot.
+    On nRF53 target there is not way to verify current swap type
+    because we use permanent swap so we can skip it. */
+    VerifyOrReturn(mcuboot_swap_type() == BOOT_SWAP_TYPE_REVERT);
 #endif
 
-ExternalFlashManager & GetFlashHandler()
-{
-    static ExternalFlashManager sFlashHandler;
-    return sFlashHandler;
+    OTAImageProcessorImpl & imageProcessor = GetOTAImageProcessor();
+    if (!boot_is_img_confirmed())
+    {
+        CHIP_ERROR err = System::MapErrorZephyr(boot_write_img_confirmed());
+        if (CHIP_NO_ERROR == err)
+        {
+            imageProcessor.SetImageConfirmed();
+            ChipLogProgress(SoftwareUpdate, "New firmware image confirmed");
+        }
+        else
+        {
+            ChipLogError(SoftwareUpdate, "Failed to confirm firmware image, it will be reverted on the next boot");
+        }
+    }
 }
+
+#endif

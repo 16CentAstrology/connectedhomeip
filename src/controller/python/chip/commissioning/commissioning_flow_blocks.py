@@ -171,7 +171,7 @@ class CommissioningFlowBlocks:
         self._logger.info("Adding Thread network")
         response = await self._devCtrl.SendCommand(nodeid=node_id, endpoint=commissioning.ROOT_ENDPOINT_ID, payload=Clusters.NetworkCommissioning.Commands.AddOrUpdateThreadNetwork(
             operationalDataset=parameter.thread_credentials))
-        if response.networkingStatus != Clusters.NetworkCommissioning.Enums.NetworkCommissioningStatus.kSuccess:
+        if response.networkingStatus != Clusters.NetworkCommissioning.Enums.NetworkCommissioningStatusEnum.kSuccess:
             raise commissioning.CommissionFailure(f"Unexpected result for adding network: {response.networkingStatus}")
 
         network_list = (await self._devCtrl.ReadAttribute(nodeid=node_id, attributes=[(commissioning.ROOT_ENDPOINT_ID, Clusters.NetworkCommissioning.Attributes.Networks)], returnClusterObject=True))[commissioning.ROOT_ENDPOINT_ID][Clusters.NetworkCommissioning].networks
@@ -179,7 +179,7 @@ class CommissioningFlowBlocks:
 
         self._logger.info("Enabling Thread network")
         response = await self._devCtrl.SendCommand(nodeid=node_id, endpoint=commissioning.ROOT_ENDPOINT_ID, payload=Clusters.NetworkCommissioning.Commands.ConnectNetwork(networkID=network_id), interactionTimeoutMs=self._devCtrl.ComputeRoundTripTimeout(node_id, upperLayerProcessingTimeoutMs=30000))
-        if response.networkingStatus != Clusters.NetworkCommissioning.Enums.NetworkCommissioningStatus.kSuccess:
+        if response.networkingStatus != Clusters.NetworkCommissioning.Enums.NetworkCommissioningStatusEnum.kSuccess:
             raise commissioning.CommissionFailure(f"Unexpected result for enabling network: {response.networkingStatus}")
 
         self._logger.info("Thread network commissioning finished")
@@ -190,7 +190,7 @@ class CommissioningFlowBlocks:
 
         self._logger.info("Adding WiFi network")
         response = await self._devCtrl.SendCommand(nodeid=node_id, endpoint=commissioning.ROOT_ENDPOINT_ID, payload=Clusters.NetworkCommissioning.Commands.AddOrUpdateWiFiNetwork(ssid=parameter.wifi_credentials.ssid, credentials=parameter.wifi_credentials.passphrase))
-        if response.networkingStatus != Clusters.NetworkCommissioning.Enums.NetworkCommissioningStatus.kSuccess:
+        if response.networkingStatus != Clusters.NetworkCommissioning.Enums.NetworkCommissioningStatusEnum.kSuccess:
             raise commissioning.CommissionFailure(f"Unexpected result for adding network: {response.networkingStatus}")
 
         network_list = (await self._devCtrl.ReadAttribute(nodeid=node_id, attributes=[(commissioning.ROOT_ENDPOINT_ID, Clusters.NetworkCommissioning.Attributes.Networks)], returnClusterObject=True))[commissioning.ROOT_ENDPOINT_ID][Clusters.NetworkCommissioning].networks
@@ -198,7 +198,7 @@ class CommissioningFlowBlocks:
 
         self._logger.info("Enabling WiFi network")
         response = await self._devCtrl.SendCommand(nodeid=node_id, endpoint=commissioning.ROOT_ENDPOINT_ID, payload=Clusters.NetworkCommissioning.Commands.ConnectNetwork(networkID=network_id), interactionTimeoutMs=self._devCtrl.ComputeRoundTripTimeout(node_id, upperLayerProcessingTimeoutMs=30000))
-        if response.networkingStatus != Clusters.NetworkCommissioning.Enums.NetworkCommissioningStatus.kSuccess:
+        if response.networkingStatus != Clusters.NetworkCommissioning.Enums.NetworkCommissioningStatusEnum.kSuccess:
             raise commissioning.CommissionFailure(f"Unexpected result for enabling network: {response.networkingStatus}")
 
         self._logger.info("WiFi network commissioning finished")
@@ -233,10 +233,19 @@ class CommissioningFlowBlocks:
     async def send_regulatory_config(self, parameter: commissioning.Parameters, node_id: int):
         self._logger.info("Sending Regulatory Config")
         response = await self._devCtrl.SendCommand(node_id, commissioning.ROOT_ENDPOINT_ID, Clusters.GeneralCommissioning.Commands.SetRegulatoryConfig(
-            newRegulatoryConfig=Clusters.GeneralCommissioning.Enums.RegulatoryLocationType(
+            newRegulatoryConfig=Clusters.GeneralCommissioning.Enums.RegulatoryLocationTypeEnum(
                 parameter.regulatory_config.location_type),
             countryCode=parameter.regulatory_config.country_code
         ))
+        if response.errorCode != 0:
+            raise commissioning.CommissionFailure(repr(response))
+
+    async def send_terms_and_conditions_acknowledgements(self, parameter: commissioning.Parameters, node_id: int):
+        self._logger.info("Settings Terms and Conditions")
+        if parameter.tc_acknowledgements:
+            response = await self._devCtrl.SendCommand(node_id, commissioning.ROOT_ENDPOINT_ID, Clusters.GeneralCommissioning.Commands.SetTCAcknowledgements(
+                TCVersion=parameter.tc_acknowledgements.version, TCUserResponse=parameter.tc_acknowledgements.user_response
+            ))
         if response.errorCode != 0:
             raise commissioning.CommissionFailure(repr(response))
 

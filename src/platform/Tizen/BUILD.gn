@@ -31,6 +31,7 @@ static_library("Tizen") {
   sources = [
     "../DeviceSafeQueue.cpp",
     "../DeviceSafeQueue.h",
+    "../GLibTypeDeleter.h",
     "../SingletonConfigurationManager.cpp",
     "AppPreference.cpp",
     "AppPreference.h",
@@ -47,18 +48,19 @@ static_library("Tizen") {
     "DeviceInstanceInfoProviderImpl.h",
     "DiagnosticDataProviderImpl.cpp",
     "DiagnosticDataProviderImpl.h",
+    "ErrorUtils.cpp",
+    "ErrorUtils.h",
     "InetPlatformConfig.h",
     "KeyValueStoreManagerImpl.cpp",
     "KeyValueStoreManagerImpl.h",
-    "Logging.cpp",
-    "MainLoop.cpp",
-    "MainLoop.h",
     "NetworkCommissioningDriver.h",
     "NetworkCommissioningEthernetDriver.cpp",
     "PlatformManagerImpl.cpp",
     "PlatformManagerImpl.h",
     "PosixConfig.cpp",
     "PosixConfig.h",
+    "SystemInfo.cpp",
+    "SystemInfo.h",
     "SystemPlatformConfig.h",
     "SystemTimeSupport.cpp",
   ]
@@ -66,7 +68,9 @@ static_library("Tizen") {
   deps = [ "${chip_root}/src/setup_payload" ]
 
   public_deps = [
+    "${chip_root}/src/app:app_config",
     "${chip_root}/src/platform:platform_base",
+    "${chip_root}/src/platform/logging:headers",
     "${tizen_root}:tizen",
   ]
 
@@ -97,6 +101,7 @@ static_library("Tizen") {
       "ThreadStackManagerImpl.cpp",
       "ThreadStackManagerImpl.h",
     ]
+    deps += [ "${chip_root}/src/app:app_config" ]
   }
 
   if (chip_enable_wifi) {
@@ -108,4 +113,13 @@ static_library("Tizen") {
   }
 
   cflags = [ "-Wconversion" ]
+}
+
+source_set("logging") {
+  deps = [
+    "${chip_root}/src/platform:platform_base",
+    "${chip_root}/src/platform/logging:headers",
+    "${tizen_root}:tizen",
+  ]
+  sources = [ "Logging.cpp" ]
 }

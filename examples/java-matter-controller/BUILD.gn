@@ -1,4 +1,4 @@
-# Copyright (c) 2022 Project CHIP Authors
+# Copyright (c) 2022-2023 Project CHIP Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,44 +18,37 @@ import("//build_overrides/chip.gni")
 import("${chip_root}/build/chip/java/rules.gni")
 import("${chip_root}/build/chip/tools.gni")
 
-java_library("java") {
-  output_name = "JavaMatterController.jar"
-  deps = [
-    "${chip_root}/src/controller/java",
-    "${chip_root}/src/setup_payload/java",
-    "${chip_root}/third_party/java_deps:annotation",
-  ]
-
-  sources = [
-    "java/src/com/matter/controller/commands/common/FutureResult.java",
-    "java/src/com/matter/controller/commands/common/RealResult.java",
-  ]
-
-  javac_flags = [ "-Xlint:deprecation" ]
-}
-
 kotlin_binary("java-matter-controller") {
   output_name = "java-matter-controller"
   deps = [
-    ":java",
-    "${chip_root}/src/controller/java:tlv_read_write_test",
-    "${chip_root}/src/controller/java:tlv_reader_test",
-    "${chip_root}/src/controller/java:tlv_writer_test",
+    "${chip_root}/src/controller/java",
+    "${chip_root}/src/controller/java:jsontlv",
+    "${chip_root}/src/controller/java:onboarding_payload",
+    "${chip_root}/third_party/java_deps:annotation",
+    "${chip_root}/third_party/java_deps:gson",
+    "${chip_root}/third_party/java_deps:json",
     "${chip_root}/third_party/java_deps:kotlin-stdlib",
+    "${chip_root}/third_party/java_deps:protobuf-java",
   ]
 
   sources = [
     "java/src/com/matter/controller/Main.kt",
+    "java/src/com/matter/controller/commands/bdx/DownloadLogCommand.kt",
+    "java/src/com/matter/controller/commands/bdx/PairOnNetworkLongDownloadLogCommand.kt",
     "java/src/com/matter/controller/commands/common/Argument.kt",
     "java/src/com/matter/controller/commands/common/ArgumentType.kt",
     "java/src/com/matter/controller/commands/common/Command.kt",
     "java/src/com/matter/controller/commands/common/CommandManager.kt",
     "java/src/com/matter/controller/commands/common/CredentialsIssuer.kt",
+    "java/src/com/matter/controller/commands/common/FutureResult.kt",
     "java/src/com/matter/controller/commands/common/IPAddress.kt",
     "java/src/com/matter/controller/commands/common/MatterCommand.kt",
+    "java/src/com/matter/controller/commands/common/RealResult.kt",
     "java/src/com/matter/controller/commands/discover/DiscoverCommand.kt",
     "java/src/com/matter/controller/commands/discover/DiscoverCommissionablesCommand.kt",
     "java/src/com/matter/controller/commands/discover/DiscoverCommissionersCommand.kt",
+    "java/src/com/matter/controller/commands/icd/ICDListCommand.kt",
+    "java/src/com/matter/controller/commands/ota/PairOnNetworkLongOtaOverBdxCommand.kt",
     "java/src/com/matter/controller/commands/pairing/CloseSessionCommand.kt",
     "java/src/com/matter/controller/commands/pairing/DiscoveryFilterType.kt",
     "java/src/com/matter/controller/commands/pairing/PairAddressPaseCommand.kt",
@@ -71,6 +64,7 @@ kotlin_binary("java-matter-controller") {
     "java/src/com/matter/controller/commands/pairing/PairOnNetworkFabricCommand.kt",
     "java/src/com/matter/controller/commands/pairing/PairOnNetworkInstanceNameCommand.kt",
     "java/src/com/matter/controller/commands/pairing/PairOnNetworkLongCommand.kt",
+    "java/src/com/matter/controller/commands/pairing/PairOnNetworkLongImExtendableInvokeCommand.kt",
     "java/src/com/matter/controller/commands/pairing/PairOnNetworkLongImInvokeCommand.kt",
     "java/src/com/matter/controller/commands/pairing/PairOnNetworkLongImReadCommand.kt",
     "java/src/com/matter/controller/commands/pairing/PairOnNetworkLongImSubscribeCommand.kt",
