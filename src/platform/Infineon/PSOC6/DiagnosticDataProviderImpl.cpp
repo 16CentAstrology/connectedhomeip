@@ -1,6 +1,7 @@
 /*
  *
  *    Copyright (c) 2021-2022 Project CHIP Authors
+ *    Copyright (c) 2024 Infineon Technologies, Inc.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -18,18 +19,19 @@
 /**
  *    @file
  *          Provides an implementation of the DiagnosticDataProvider object
- *          for P6 platform.
+ *          for PSOC6 platform.
  */
 
 #include <platform/internal/CHIPDeviceLayerInternal.h>
 
+#include "cy_network_mw_core.h"
+#include "cy_nw_helper.h"
 #include "cyhal_system.h"
-#include <cy_lwip.h>
 #include <lib/support/CHIPMemString.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/DiagnosticDataProvider.h>
 #include <platform/Infineon/PSOC6/DiagnosticDataProviderImpl.h>
-#include <platform/Infineon/PSOC6/P6Utils.h>
+#include <platform/Infineon/PSOC6/PSOC6Utils.h>
 
 namespace chip {
 namespace DeviceLayer {
@@ -43,7 +45,7 @@ DiagnosticDataProviderImpl & DiagnosticDataProviderImpl::GetDefaultInstance()
 CHIP_ERROR DiagnosticDataProviderImpl::GetCurrentHeapFree(uint64_t & currentHeapFree)
 {
     heap_info_t heap;
-    Internal::P6Utils::heap_usage(&heap);
+    Internal::PSOC6Utils::heap_usage(&heap);
     currentHeapFree = static_cast<uint64_t>(heap.HeapFree);
     return CHIP_NO_ERROR;
 }
@@ -52,7 +54,7 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetCurrentHeapUsed(uint64_t & currentHeap
 {
     // Calculate the Heap used based on Total heap - Free heap
     heap_info_t heap;
-    Internal::P6Utils::heap_usage(&heap);
+    Internal::PSOC6Utils::heap_usage(&heap);
     currentHeapUsed = static_cast<uint64_t>(heap.HeapUsed);
     return CHIP_NO_ERROR;
 }
@@ -60,7 +62,7 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetCurrentHeapUsed(uint64_t & currentHeap
 CHIP_ERROR DiagnosticDataProviderImpl::GetCurrentHeapHighWatermark(uint64_t & currentHeapHighWatermark)
 {
     heap_info_t heap;
-    Internal::P6Utils::heap_usage(&heap);
+    Internal::PSOC6Utils::heap_usage(&heap);
     currentHeapHighWatermark = static_cast<uint64_t>(heap.HeapMax);
     return CHIP_NO_ERROR;
 }
@@ -155,13 +157,13 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetNetworkInterfaces(NetworkInterface ** 
     struct netif * net_interface;
     CHIP_ERROR err         = CHIP_NO_ERROR;
     NetworkInterface * ifp = new NetworkInterface();
-    net_interface          = cy_lwip_get_interface(CY_LWIP_STA_NW_INTERFACE);
+    net_interface          = (netif *) cy_network_get_nw_interface(CY_NETWORK_WIFI_STA_INTERFACE, 0);
     if (net_interface)
     {
         /* Update Network Interface list */
         ifp->name                            = CharSpan::fromCharString(net_interface->name);
         ifp->isOperational                   = net_interface->flags & NETIF_FLAG_LINK_UP;
-        ifp->type                            = EMBER_ZCL_INTERFACE_TYPE_ENUM_WI_FI;
+        ifp->type                            = app::Clusters::GeneralDiagnostics::InterfaceTypeEnum::kWiFi;
         ifp->offPremiseServicesReachableIPv4 = mipv4_offpremise;
         ifp->offPremiseServicesReachableIPv6 = mipv6_offpremise;
         ifp->hardwareAddress                 = ByteSpan(net_interface->hwaddr, net_interface->hwaddr_len);
@@ -183,8 +185,10 @@ void DiagnosticDataProviderImpl::ReleaseNetworkInterfaces(NetworkInterface * net
 
 /* Wi-Fi Diagnostics Cluster Support */
 
-CHIP_ERROR DiagnosticDataProviderImpl::GetWiFiBssId(ByteSpan & value)
+CHIP_ERROR DiagnosticDataProviderImpl::GetWiFiBssId(MutableByteSpan & value)
 {
+    VerifyOrReturnError(value.size() >= CY_WCM_MAC_ADDR_LEN, CHIP_ERROR_BUFFER_TOO_SMALL);
+
     cy_wcm_associated_ap_info_t ap_info;
     cy_rslt_t result = CY_RSLT_SUCCESS;
     CHIP_ERROR err   = CHIP_NO_ERROR;
@@ -193,10 +197,10 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetWiFiBssId(ByteSpan & value)
     if (result != CY_RSLT_SUCCESS)
     {
         ChipLogError(DeviceLayer, "cy_wcm_get_associated_ap_info failed: %d", (int) result);
-        SuccessOrExit(CHIP_ERROR_INTERNAL);
+        SuccessOrExit(err = CHIP_ERROR_INTERNAL);
     }
-    memcpy(mWiFiMacAddress, ap_info.BSSID, CY_WCM_MAC_ADDR_LEN);
-    value = ByteSpan(mWiFiMacAddress, CY_WCM_MAC_ADDR_LEN);
+    memcpy(value.data(), ap_info.BSSID, CY_WCM_MAC_ADDR_LEN);
+    value.reduce_size(CY_WCM_MAC_ADDR_LEN);
 
 exit:
     return err;
@@ -214,7 +218,7 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetWiFiSecurityType(app::Clusters::WiFiNe
     if (result != CY_RSLT_SUCCESS)
     {
         ChipLogError(DeviceLayer, "cy_wcm_get_associated_ap_info failed: %d", (int) result);
-        SuccessOrExit(CHIP_ERROR_INTERNAL);
+        SuccessOrExit(err = CHIP_ERROR_INTERNAL);
     }
     if (ap_info.security == CY_WCM_SECURITY_OPEN)
     {
@@ -289,7 +293,7 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetWiFiChannelNumber(uint16_t & channelNu
     if (result != CY_RSLT_SUCCESS)
     {
         ChipLogError(DeviceLayer, "cy_wcm_get_associated_ap_info failed: %d", (int) result);
-        SuccessOrExit(CHIP_ERROR_INTERNAL);
+        SuccessOrExit(err = CHIP_ERROR_INTERNAL);
     }
     channelNumber = ap_info.channel;
 
@@ -307,7 +311,7 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetWiFiRssi(int8_t & rssi)
     if (result != CY_RSLT_SUCCESS)
     {
         ChipLogError(DeviceLayer, "cy_wcm_get_associated_ap_info failed: %d", (int) result);
-        SuccessOrExit(CHIP_ERROR_INTERNAL);
+        SuccessOrExit(err = CHIP_ERROR_INTERNAL);
     }
     rssi = ap_info.signal_strength;
 
@@ -350,7 +354,7 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetWiFiCurrentMaxRate(uint64_t & currentM
     if (result != CY_RSLT_SUCCESS)
     {
         ChipLogError(DeviceLayer, "cy_wcm_get_wlan_statistics failed: %d", (int) result);
-        SuccessOrExit(CHIP_ERROR_INTERNAL);
+        SuccessOrExit(err = CHIP_ERROR_INTERNAL);
     }
     count          = stats.tx_bitrate * PHYRATE_KPBS_BYTES_PER_SEC;
     currentMaxRate = static_cast<uint32_t>(count);
@@ -394,7 +398,7 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetWiFiPacketUnicastRxCount(uint32_t & pa
     if (result != CY_RSLT_SUCCESS)
     {
         ChipLogError(DeviceLayer, "cy_wcm_get_wlan_statistics failed: %d", (int) result);
-        SuccessOrExit(CHIP_ERROR_INTERNAL);
+        SuccessOrExit(err = CHIP_ERROR_INTERNAL);
     }
     count = stats.rx_packets;
     count -= mPacketUnicastRxCount;
@@ -417,7 +421,7 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetWiFiPacketUnicastTxCount(uint32_t & pa
     if (result != CY_RSLT_SUCCESS)
     {
         ChipLogError(DeviceLayer, "cy_wcm_get_wlan_statistics failed: %d", (int) result);
-        SuccessOrExit(CHIP_ERROR_INTERNAL);
+        SuccessOrExit(err = CHIP_ERROR_INTERNAL);
     }
 
     count = stats.tx_packets;
@@ -504,7 +508,7 @@ void DiagnosticDataProviderImpl::xtlv_buffer_parsing(const uint8_t * tlv_buf, ui
     wl_cnt_ge40mcst_v1_t cnt_ge40;
 
     /* parse the tlv buffer and populate the cnt and cnt_ge40 buffer with the counter values */
-    Internal::P6Utils::unpack_xtlv_buf(tlv_buf, buflen, &cnt, &cnt_ge40);
+    Internal::PSOC6Utils::unpack_xtlv_buf(tlv_buf, buflen, &cnt, &cnt_ge40);
 
     /* Read the counter based on the Counttype passed */
     ReadCounters(Counttype, count, &cnt, &cnt_ge40);
@@ -569,17 +573,20 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetThreadMetrics(ThreadMetrics ** threadM
         {
             ThreadMetrics * thread = (ThreadMetrics *) pvPortMalloc(sizeof(ThreadMetrics));
 
-            Platform::CopyString(thread->NameBuf, taskStatusArray[x].pcTaskName);
-            thread->name.Emplace(CharSpan::fromCharString(thread->NameBuf));
-            thread->id = taskStatusArray[x].xTaskNumber;
+            if (thread != NULL)
+            {
+                Platform::CopyString(thread->NameBuf, taskStatusArray[x].pcTaskName);
+                thread->name.Emplace(CharSpan::fromCharString(thread->NameBuf));
+                thread->id = taskStatusArray[x].xTaskNumber;
 
-            thread->stackFreeMinimum.Emplace(taskStatusArray[x].usStackHighWaterMark);
-            /* Unsupported metrics */
-            thread->stackSize.Emplace(0);
-            thread->stackFreeCurrent.Emplace(0);
+                thread->stackFreeMinimum.Emplace(taskStatusArray[x].usStackHighWaterMark);
+                /* Unsupported metrics */
+                thread->stackSize.Emplace(0);
+                thread->stackFreeCurrent.Emplace(0);
 
-            thread->Next = head;
-            head         = thread;
+                thread->Next = head;
+                head         = thread;
+            }
         }
 
         *threadMetricsOut = head;

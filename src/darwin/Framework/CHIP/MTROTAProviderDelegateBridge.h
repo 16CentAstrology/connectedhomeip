@@ -1,6 +1,6 @@
 /**
  *
- *    Copyright (c) 2022 Project CHIP Authors
+ *    Copyright (c) 2022-2024 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -17,6 +17,9 @@
 
 #import <Matter/MTROTAProviderDelegate.h>
 
+#import "MTRDeviceController_Concrete.h"
+#import "MTROTAUnsolicitedBDXMessageHandler.h"
+
 #include <app/clusters/ota-provider/ota-provider-delegate.h>
 
 NS_ASSUME_NONNULL_BEGIN
@@ -24,7 +27,7 @@ NS_ASSUME_NONNULL_BEGIN
 class MTROTAProviderDelegateBridge : public chip::app::Clusters::OTAProviderDelegate
 {
 public:
-    MTROTAProviderDelegateBridge(id<MTROTAProviderDelegate> delegate);
+    MTROTAProviderDelegateBridge();
     ~MTROTAProviderDelegateBridge();
 
     CHIP_ERROR Init(chip::System::Layer * systemLayer, chip::Messaging::ExchangeManager * exchangeManager);
@@ -35,7 +38,7 @@ public:
 
     // ControllerShuttingDown must be called on the Matter work queue, since it
     // touches Matter objects.
-    void ControllerShuttingDown(MTRDeviceController * controller);
+    void ControllerShuttingDown(MTRDeviceController_Concrete * controller);
 
     void HandleQueryImage(
         chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
@@ -66,8 +69,8 @@ private:
         const chip::app::Clusters::OtaSoftwareUpdateProvider::Commands::NotifyUpdateApplied::DecodableType & commandData,
         MTROTASoftwareUpdateProviderClusterNotifyUpdateAppliedParams * commandParams);
 
-    _Nullable id<MTROTAProviderDelegate> mDelegate;
-    dispatch_queue_t mDelegateNotificationQueue;
+protected:
+    MTROTAUnsolicitedBDXMessageHandler mOtaUnsolicitedBDXMsgHandler;
 };
 
 NS_ASSUME_NONNULL_END

@@ -28,7 +28,7 @@
 #include "esp_idf_version.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include <app/server/OnboardingCodesUtil.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
 #include "esp_spi_flash.h"
@@ -41,7 +41,7 @@
 #define APP_EVENT_QUEUE_SIZE 10
 #define APP_TASK_STACK_SIZE (3072)
 
-static const char * TAG = "app-task";
+static const char TAG[] = "app-task";
 
 namespace {
 

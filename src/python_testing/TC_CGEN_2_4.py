@@ -15,7 +15,27 @@
 #    limitations under the License.
 #
 
+# See https://github.com/project-chip/connectedhomeip/blob/master/docs/testing/python.md#defining-the-ci-test-arguments
+# for details about the block below.
+#
+# === BEGIN CI TEST ARGUMENTS ===
+# test-runner-runs:
+#   run1:
+#     app: ${ALL_CLUSTERS_APP}
+#     app-args: --discriminator 1234 --KVS kvs1 --trace-to json:${TRACE_APP}.json
+#     script-args: >
+#       --storage-path admin_storage.json
+#       --commissioning-method on-network
+#       --discriminator 1234
+#       --passcode 20202021
+#       --trace-to json:${TRACE_TEST_JSON}.json
+#       --trace-to perfetto:${TRACE_TEST_PERFETTO}.perfetto
+#     factory-reset: true
+#     quiet: true
+# === END CI TEST ARGUMENTS ===
+
 import logging
+import random
 import time
 
 import chip.CertificateAuthority
@@ -23,18 +43,31 @@ import chip.clusters as Clusters
 import chip.clusters.enum
 import chip.FabricAdmin
 from chip import ChipDeviceCtrl
-from matter_testing_support import MatterBaseTest, async_test_body, default_matter_test_main
+from chip.ChipDeviceCtrl import CommissioningParameters
+from chip.exceptions import ChipStackError
+from chip.native import PyChipError
+from chip.testing.matter_testing import MatterBaseTest, async_test_body, default_matter_test_main
 from mobly import asserts
+
+# Commissioning stage numbers - we should find a better way to match these to the C++ code
+# TODO: https://github.com/project-chip/connectedhomeip/issues/36629
+kArmFailsafe = 3
+kConfigRegulatory = 4
+kSendPAICertificateRequest = 9
+kSendDACCertificateRequest = 10
+kSendAttestationRequest = 11
+kSendOpCertSigningRequest = 14
+kSendTrustedRootCert = 17
+kSendNOC = 18
 
 
 class TC_CGEN_2_4(MatterBaseTest):
 
-    def OpenCommissioningWindow(self) -> int:
+    async def OpenCommissioningWindow(self) -> CommissioningParameters:
         try:
-            pin, code = self.th1.OpenCommissioningWindow(
-                nodeid=self.dut_node_id, timeout=600, iteration=10000, discriminator=self.matter_test_config.discriminator, option=1)
-            time.sleep(5)
-            return pin, code
+            params = await self.th1.OpenCommissioningWindow(
+                nodeid=self.dut_node_id, timeout=600, iteration=10000, discriminator=self.discriminator, option=1)
+            return params
 
         except Exception as e:
             logging.exception('Error running OpenCommissioningWindow %s', e)
@@ -44,16 +77,17 @@ class TC_CGEN_2_4(MatterBaseTest):
             self, stage: int, expectedErrorPart: chip.native.ErrorSDKPart, expectedErrCode: int):
 
         logging.info("-----------------Fail on step {}-------------------------".format(stage))
-        pin, code = self.OpenCommissioningWindow()
+        params = await self.OpenCommissioningWindow()
         self.th2.ResetTestCommissioner()
         # This will run the commissioning up to the point where stage x is run and the
         # response is sent before the test commissioner simulates a failure
         self.th2.SetTestCommissionerPrematureCompleteAfter(stage)
-        success, errcode = self.th2.CommissionOnNetwork(
-            nodeId=self.dut_node_id, setupPinCode=pin,
-            filterType=ChipDeviceCtrl.DiscoveryFilterType.LONG_DISCRIMINATOR, filter=self.matter_test_config.discriminator)
-        logging.info('Commissioning complete done. Successful? {}, errorcode = {}'.format(success, errcode))
-        asserts.assert_false(success, 'Commissioning complete did not error as expected')
+        ctx = asserts.assert_raises(ChipStackError)
+        with ctx:
+            await self.th2.CommissionOnNetwork(
+                nodeId=self.dut_node_id, setupPinCode=params.setupPinCode,
+                filterType=ChipDeviceCtrl.DiscoveryFilterType.LONG_DISCRIMINATOR, filter=self.discriminator)
+        errcode = PyChipError.from_code(ctx.exception.err)
         asserts.assert_true(errcode.sdk_part == expectedErrorPart, 'Unexpected error type returned from CommissioningComplete')
         asserts.assert_true(errcode.sdk_code == expectedErrCode, 'Unexpected error code returned from CommissioningComplete')
         revokeCmd = Clusters.AdministratorCommissioning.Commands.RevokeCommissioning()
@@ -64,35 +98,37 @@ class TC_CGEN_2_4(MatterBaseTest):
     @async_test_body
     async def test_TC_CGEN_2_4(self):
         self.th1 = self.default_controller
+        self.discriminator = random.randint(0, 4095)
         th2_certificate_authority = self.certificate_authority_manager.NewCertificateAuthority()
         th2_fabric_admin = th2_certificate_authority.NewFabricAdmin(vendorId=0xFFF1, fabricId=self.th1.fabricId + 1)
         self.th2 = th2_fabric_admin.NewController(nodeId=2, useTestCommissioner=True)
-        # Stage 3 = kArmFailsafe, expect General error 0x7e (UNSUPPORTED_ACCESS)
-        await self.CommissionToStageSendCompleteAndCleanup(3, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
-        # Stage 4 = kConfigRegulatory, expect General error 0x7e (UNSUPPORTED_ACCESS)
-        await self.CommissionToStageSendCompleteAndCleanup(4, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
-        # Stage 5 = kSendPAICertificateRequest, expect General error 0x7e (UNSUPPORTED_ACCESS)
-        await self.CommissionToStageSendCompleteAndCleanup(5, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
-        # Stage 6 = kSendDACCertificateRequest, expect General error 0x7e (UNSUPPORTED_ACCESS)
-        await self.CommissionToStageSendCompleteAndCleanup(6, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
-        # Stage 7 = kSendAttestationRequest, expect General error 0x7e (UNSUPPORTED_ACCESS)
-        await self.CommissionToStageSendCompleteAndCleanup(7, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
-        # Stage 9 = kSendOpCertSigningRequest, expect General error 0x7e (UNSUPPORTED_ACCESS)
-        await self.CommissionToStageSendCompleteAndCleanup(9, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
-        # Stage 12 = kSendTrustedRootCert, expect General error 0x7e (UNSUPPORTED_ACCESS)
-        await self.CommissionToStageSendCompleteAndCleanup(12, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
-        # Stage 13 = kSendNOC, expect cluster error InvalidAuthentication
-        await self.CommissionToStageSendCompleteAndCleanup(13, chip.native.ErrorSDKPart.IM_CLUSTER_STATUS, 0x02)
+        # kArmFailsafe, expect General error 0x7e (UNSUPPORTED_ACCESS)
+        await self.CommissionToStageSendCompleteAndCleanup(kArmFailsafe, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
+        # kConfigRegulatory, expect General error 0x7e (UNSUPPORTED_ACCESS)
+        await self.CommissionToStageSendCompleteAndCleanup(kConfigRegulatory, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
+        # kSendPAICertificateRequest, expect General error 0x7e (UNSUPPORTED_ACCESS)
+        await self.CommissionToStageSendCompleteAndCleanup(kSendPAICertificateRequest, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
+        # kSendDACCertificateRequest, expect General error 0x7e (UNSUPPORTED_ACCESS)
+        await self.CommissionToStageSendCompleteAndCleanup(kSendDACCertificateRequest, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
+        # kSendAttestationRequest, expect General error 0x7e (UNSUPPORTED_ACCESS)
+        await self.CommissionToStageSendCompleteAndCleanup(kSendAttestationRequest, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
+        # kSendOpCertSigningRequest, expect General error 0x7e (UNSUPPORTED_ACCESS)
+        await self.CommissionToStageSendCompleteAndCleanup(kSendOpCertSigningRequest, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
+        # kSendTrustedRootCert, expect General error 0x7e (UNSUPPORTED_ACCESS)
+        await self.CommissionToStageSendCompleteAndCleanup(kSendTrustedRootCert, chip.native.ErrorSDKPart.IM_GLOBAL_STATUS, 0x7e)
+        # kSendNOC, expect cluster error InvalidAuthentication
+        await self.CommissionToStageSendCompleteAndCleanup(kSendNOC, chip.native.ErrorSDKPart.IM_CLUSTER_STATUS, 0x02)
 
         logging.info('Step 15 - TH1 opens a commissioning window')
-        pin, code = self.OpenCommissioningWindow()
+        params = await self.OpenCommissioningWindow()
 
         logging.info('Step 16 - TH2 fully commissions the DUT')
         self.th2.ResetTestCommissioner()
-        success, errcode = self.th2.CommissionOnNetwork(
-            nodeId=self.dut_node_id, setupPinCode=pin,
-            filterType=ChipDeviceCtrl.DiscoveryFilterType.LONG_DISCRIMINATOR, filter=self.matter_test_config.discriminator)
-        logging.info('Commissioning complete done. Successful? {}, errorcode = {}'.format(success, errcode))
+
+        await self.th2.CommissionOnNetwork(
+            nodeId=self.dut_node_id, setupPinCode=params.setupPinCode,
+            filterType=ChipDeviceCtrl.DiscoveryFilterType.LONG_DISCRIMINATOR, filter=self.discriminator)
+        logging.info('Commissioning complete done.')
 
         logging.info('Step 17 - TH1 sends an arm failsafe')
         cmd = Clusters.GeneralCommissioning.Commands.ArmFailSafe(expiryLengthSeconds=900, breadcrumb=0)
@@ -102,18 +138,18 @@ class TC_CGEN_2_4(MatterBaseTest):
         logging.info('Step 18 - TH1 reads the location capability')
         attr = Clusters.GeneralCommissioning.Attributes.LocationCapability
         cap = await self.read_single_attribute(dev_ctrl=self.th1, node_id=self.dut_node_id, endpoint=0, attribute=attr)
-        if cap == Clusters.GeneralCommissioning.Enums.RegulatoryLocationType.kIndoor:
-            newloc = Clusters.GeneralCommissioning.Enums.RegulatoryLocationType.kOutdoor
-        elif cap == Clusters.GeneralCommissioning.Enums.RegulatoryLocationType.kOutdoor:
-            newloc = Clusters.GeneralCommissioning.Enums.RegulatoryLocationType.kIndoor
+        if cap == Clusters.GeneralCommissioning.Enums.RegulatoryLocationTypeEnum.kIndoor:
+            newloc = Clusters.GeneralCommissioning.Enums.RegulatoryLocationTypeEnum.kOutdoor
+        elif cap == Clusters.GeneralCommissioning.Enums.RegulatoryLocationTypeEnum.kOutdoor:
+            newloc = Clusters.GeneralCommissioning.Enums.RegulatoryLocationTypeEnum.kIndoor
         else:
-            newloc = Clusters.GeneralCommissioning.Enums.RegulatoryLocationType.extend_enum_if_value_doesnt_exist(3)
+            newloc = Clusters.GeneralCommissioning.Enums.RegulatoryLocationTypeEnum.extend_enum_if_value_doesnt_exist(3)
 
         logging.info('Step 19 Send SetRgulatoryConfig with incorrect location newloc = {}'.format(newloc))
         cmd = Clusters.GeneralCommissioning.Commands.SetRegulatoryConfig(
             newRegulatoryConfig=newloc, countryCode="XX", breadcrumb=0)
         ret = await self.th1.SendCommand(nodeid=self.dut_node_id, endpoint=0, payload=cmd)
-        asserts.assert_true(ret.errorCode, Clusters.GeneralCommissioning.Enums.CommissioningError.kValueOutsideRange)
+        asserts.assert_true(ret.errorCode, Clusters.GeneralCommissioning.Enums.CommissioningErrorEnum.kValueOutsideRange)
 
         logging.info('Step 20 - TH2 sends CommissioningComplete')
         cmd = Clusters.GeneralCommissioning.Commands.CommissioningComplete()
@@ -121,7 +157,7 @@ class TC_CGEN_2_4(MatterBaseTest):
         asserts.assert_true(isinstance(resp, Clusters.GeneralCommissioning.Commands.CommissioningCompleteResponse),
                             'Incorrect response type from command')
         asserts.assert_true(
-            resp.errorCode == Clusters.GeneralCommissioning.Enums.CommissioningError.kInvalidAuthentication, 'Incorrect error code')
+            resp.errorCode == Clusters.GeneralCommissioning.Enums.CommissioningErrorEnum.kInvalidAuthentication, 'Incorrect error code')
 
         logging.info('Step 21 - TH1 sends an arm failsafe with timeout==0')
         cmd = Clusters.GeneralCommissioning.Commands.ArmFailSafe(expiryLengthSeconds=0, breadcrumb=0)
@@ -133,7 +169,7 @@ class TC_CGEN_2_4(MatterBaseTest):
         resp = await self.th2.SendCommand(nodeid=self.dut_node_id, endpoint=0, payload=cmd)
         asserts.assert_true(isinstance(resp, Clusters.GeneralCommissioning.Commands.CommissioningCompleteResponse),
                             'Incorrect response type from command')
-        asserts.assert_true(resp.errorCode == Clusters.GeneralCommissioning.Enums.CommissioningError.kNoFailSafe,
+        asserts.assert_true(resp.errorCode == Clusters.GeneralCommissioning.Enums.CommissioningErrorEnum.kNoFailSafe,
                             'Incorrect error code')
 
         logging.info('Step 23 - TH2 reads fabric index')

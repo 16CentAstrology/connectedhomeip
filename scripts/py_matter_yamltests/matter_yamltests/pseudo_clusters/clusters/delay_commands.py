@@ -40,6 +40,7 @@ _DEFINITION = '''<?xml version="1.0"?>
     <command source="client" code="3" name="WaitForMessage">
       <arg name="registerKey" type="char_string"/>
       <arg name="message" type="char_string"/>
+      <arg name="timeoutInSeconds" type="int16u" optional="true"/>
     </command>
 </cluster>
 </configurator>
@@ -58,7 +59,7 @@ class DelayCommands(PseudoCluster):
                 duration_in_ms = argument['value']
 
         sys.stdout.flush()
-        time.sleep(duration_in_ms / 1000)
+        time.sleep(int(duration_in_ms) / 1000)
 
     async def WaitForMessage(self, request):
         AccessoryServerBridge.waitForMessage(request)

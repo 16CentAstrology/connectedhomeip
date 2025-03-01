@@ -18,11 +18,13 @@
 package com.matter.controller.commands.pairing
 
 import chip.devicecontroller.ChipDeviceController
+import chip.devicecontroller.ICDDeviceInfo
+import chip.devicecontroller.ICDRegistrationInfo
+import chip.devicecontroller.NetworkCredentials
 import com.matter.controller.commands.common.CredentialsIssuer
 import com.matter.controller.commands.common.IPAddress
 import com.matter.controller.commands.common.MatterCommand
 import java.net.InetAddress
-import java.net.UnknownHostException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -61,37 +63,35 @@ abstract class PairingCommand(
         addArgument("ssid", ssid, null, false)
         addArgument("password", password, null, false)
       }
-
-      PairingNetworkType.THREAD -> addArgument("operationalDataset", operationalDataset, null, false)
+      PairingNetworkType.THREAD ->
+        addArgument("operationalDataset", operationalDataset, null, false)
     }
 
     when (pairingMode) {
       PairingModeType.NONE -> {}
-      PairingModeType.CODE, PairingModeType.CODE_PASE_ONLY -> {
+      PairingModeType.CODE,
+      PairingModeType.CODE_PASE_ONLY -> {
         addArgument("payload", onboardingPayload, null, false)
-        addArgument("discover-once", discoverOnce, null, false)
-        addArgument("use-only-onnetwork-discovery", useOnlyOnNetworkDiscovery, null, false)
+        addArgument("discover-once", discoverOnce, null, true)
+        addArgument("use-only-onnetwork-discovery", useOnlyOnNetworkDiscovery, null, true)
       }
-
       PairingModeType.ADDRESS_PASE_ONLY -> {
         addArgument("setup-pin-code", 0, 134217727, setupPINCode, null, false)
         addArgument("device-remote-ip", remoteAddr, false)
         addArgument("device-remote-port", 0.toShort(), Short.MAX_VALUE, remotePort, null, false)
       }
-
       PairingModeType.BLE -> {
         addArgument("setup-pin-code", 0, 134217727, setupPINCode, null, false)
         addArgument("discriminator", 0.toShort(), 4096.toShort(), discriminator, null, false)
       }
-
-      PairingModeType.ON_NETWORK -> addArgument("setup-pin-code", 0, 134217727, setupPINCode, null, false)
+      PairingModeType.ON_NETWORK ->
+        addArgument("setup-pin-code", 0, 134217727, setupPINCode, null, false)
       PairingModeType.SOFT_AP -> {
         addArgument("setup-pin-code", 0, 134217727, setupPINCode, null, false)
         addArgument("discriminator", 0.toShort(), 4096.toShort(), discriminator, null, false)
         addArgument("device-remote-ip", remoteAddr, false)
         addArgument("device-remote-port", 0.toShort(), Short.MAX_VALUE, remotePort, null, false)
       }
-
       PairingModeType.ALREADY_DISCOVERED -> {
         addArgument("setup-pin-code", 0, 134217727, setupPINCode, null, false)
         addArgument("device-remote-ip", remoteAddr, false)
@@ -102,44 +102,18 @@ abstract class PairingCommand(
     when (filterType) {
       DiscoveryFilterType.NONE -> {}
       DiscoveryFilterType.SHORT_DISCRIMINATOR,
-      DiscoveryFilterType.LONG_DISCRIMINATOR -> addArgument(
-        "discriminator",
-        0.toShort(),
-        4096.toShort(),
-        discriminator,
-        null,
-        false
-      )
-
-      DiscoveryFilterType.VENDOR_ID -> addArgument(
-        "vendor-id",
-        1.toShort(),
-        Short.MAX_VALUE,
-        discoveryFilterCode,
-        null,
-        false
-      )
-
-      DiscoveryFilterType.COMPRESSED_FABRIC_ID -> addArgument(
-        "fabric-id",
-        0L,
-        Long.MAX_VALUE,
-        discoveryFilterCode,
-        null,
-        false
-      )
-
-      DiscoveryFilterType.COMMISSIONING_MODE, DiscoveryFilterType.COMMISSIONER -> {}
-      DiscoveryFilterType.DEVICE_TYPE -> addArgument(
-        "device-type",
-        0.toShort(),
-        Short.MAX_VALUE,
-        discoveryFilterCode,
-        null,
-        false
-      )
-
-      DiscoveryFilterType.INSTANCE_NAME -> addArgument("name", discoveryFilterInstanceName, null, false)
+      DiscoveryFilterType.LONG_DISCRIMINATOR ->
+        addArgument("discriminator", 0.toShort(), 4096.toShort(), discriminator, null, false)
+      DiscoveryFilterType.VENDOR_ID ->
+        addArgument("vendor-id", 1.toShort(), Short.MAX_VALUE, discoveryFilterCode, null, false)
+      DiscoveryFilterType.COMPRESSED_FABRIC_ID ->
+        addArgument("fabric-id", 0L, Long.MAX_VALUE, discoveryFilterCode, null, false)
+      DiscoveryFilterType.COMMISSIONING_MODE,
+      DiscoveryFilterType.COMMISSIONER -> {}
+      DiscoveryFilterType.DEVICE_TYPE ->
+        addArgument("device-type", 0.toShort(), Short.MAX_VALUE, discoveryFilterCode, null, false)
+      DiscoveryFilterType.INSTANCE_NAME ->
+        addArgument("name", discoveryFilterInstanceName, null, false)
     }
 
     addArgument("timeout", 0L, Long.MAX_VALUE, timeoutMillis, null, false)
@@ -153,20 +127,20 @@ abstract class PairingCommand(
     logger.log(Level.INFO, "onStatusUpdate with status: $status")
   }
 
-  override fun onPairingComplete(errorCode: Int) {
+  override fun onPairingComplete(errorCode: Long) {
     logger.log(Level.INFO, "onPairingComplete with error code: $errorCode")
-    if (errorCode != 0) {
+    if (errorCode != 0L) {
       setFailure("onPairingComplete failure")
     }
   }
 
-  override fun onPairingDeleted(errorCode: Int) {
+  override fun onPairingDeleted(errorCode: Long) {
     logger.log(Level.INFO, "onPairingDeleted with error code: $errorCode")
   }
 
-  override fun onCommissioningComplete(nodeId: Long, errorCode: Int) {
+  override fun onCommissioningComplete(nodeId: Long, errorCode: Long) {
     logger.log(Level.INFO, "onCommissioningComplete with error code: $errorCode")
-    if (errorCode == 0) {
+    if (errorCode == 0L) {
       setSuccess()
     } else {
       setFailure("onCommissioningComplete failure")
@@ -174,12 +148,15 @@ abstract class PairingCommand(
   }
 
   override fun onReadCommissioningInfo(
-    vendorId: Int, productId: Int, wifiEndpointId: Int, threadEndpointId: Int
+    vendorId: Int,
+    productId: Int,
+    wifiEndpointId: Int,
+    threadEndpointId: Int
   ) {
     logger.log(Level.INFO, "onReadCommissioningInfo")
   }
 
-  override fun onCommissioningStatusUpdate(nodeId: Long, stage: String?, errorCode: Int) {
+  override fun onCommissioningStatusUpdate(nodeId: Long, stage: String?, errorCode: Long) {
     logger.log(Level.INFO, "onCommissioningStatusUpdate")
   }
 
@@ -201,6 +178,21 @@ abstract class PairingCommand(
     for (i in csr.indices) {
       print(csr[i].toString() + " ")
     }
+  }
+
+  override fun onICDRegistrationInfoRequired() {
+    logger.log(Level.INFO, "onICDRegistrationInfoRequired")
+    currentCommissioner()
+      .updateCommissioningICDRegistrationInfo(
+        ICDRegistrationInfo.newBuilder().setICDStayActiveDurationMsec(30000L).build()
+      )
+  }
+
+  override fun onICDRegistrationComplete(errorCode: Long, icdDeviceInfo: ICDDeviceInfo) {
+    logger.log(
+      Level.INFO,
+      "onICDRegistrationComplete with errorCode: $errorCode, symmetricKey: ${icdDeviceInfo.symmetricKey.toHex()}, icdDeviceInfo: $icdDeviceInfo"
+    )
   }
 
   fun getNodeId(): Long {
@@ -226,6 +218,37 @@ abstract class PairingCommand(
   fun getTimeoutMillis(): Long {
     return timeoutMillis.get()
   }
+
+  fun getOnboardingPayload(): String {
+    return onboardingPayload.toString()
+  }
+
+  fun getWifiNetworkCredentials(): NetworkCredentials {
+    return NetworkCredentials.forWiFi(
+      NetworkCredentials.WiFiCredentials(ssid.toString(), password.toString())
+    )
+  }
+
+  fun getThreadNetworkCredentials(): NetworkCredentials {
+    return NetworkCredentials.forThread(
+      NetworkCredentials.ThreadCredentials(operationalDataset.toString().hexToByteArray())
+    )
+  }
+
+  private fun String.hexToByteArray(): ByteArray {
+    return chunked(2).map { byteStr -> byteStr.toUByte(16).toByte() }.toByteArray()
+  }
+
+  fun getDiscoverOnce(): Boolean {
+    return discoverOnce.get()
+  }
+
+  fun getUseOnlyOnNetworkDiscovery(): Boolean {
+    return useOnlyOnNetworkDiscovery.get()
+  }
+
+  private fun ByteArray.toHex(): String =
+    joinToString(separator = "") { eachByte -> "%02x".format(eachByte) }
 
   companion object {
     private val logger = Logger.getLogger(PairingCommand::class.java.name)

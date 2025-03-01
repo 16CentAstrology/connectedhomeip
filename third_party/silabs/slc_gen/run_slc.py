@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 
-if len(sys.argv) != 7:
+if len(sys.argv) != 9:
     print("wrong number of arguments")
     sys.exit(1)
 
@@ -13,18 +13,31 @@ def asBoolean(valueToTest):
     return ("true" == valueToTest)
 
 
+def isMG24(partnumber):
+    return ("EFR32MG24" in partnumber or "MGM240" in partnumber)
+
+
+def isMG26(partnumber):
+    return ("EFR32MG26" in partnumber)
+
+
 root_path = sys.argv[1]
 silabs_board = str(sys.argv[2]).lower()
 disable_lcd = asBoolean(sys.argv[3])
 use_wstk_buttons = asBoolean(sys.argv[4])
 use_wstk_leds = asBoolean(sys.argv[5])
 use_external_flash = asBoolean(sys.argv[6])
+silabs_mcu = str(sys.argv[7])
+output_path = str(sys.argv[8])
 
 slcp_file_path = os.path.join(root_path, "examples/platform/silabs/matter-platform.slcp")
 template_path = os.path.join(root_path, "third_party/silabs/slc_gen/")
-output_path = template_path + sys.argv[2] + '/'
 
 slc_arguments = ""
+
+# Add Familly specific component
+if isMG24(silabs_mcu) or isMG26(silabs_mcu):
+    slc_arguments += "uartdrv_eusart:vcom,"
 
 # Translate GN arguments in SLC arguments
 if not disable_lcd:
@@ -44,7 +57,28 @@ slc_arguments += silabs_board
 
 print(slc_arguments)
 
-subprocess.run(["slc", "generate", slcp_file_path, "-d", output_path, "--with", slc_arguments], check=True)
+if "SISDK_ROOT" in os.environ:
+    sisdk_root = os.getenv('SISDK_ROOT')
+else:
+    # If no gsdk path is set in the environment, use the standard path to the submodule
+    sisdk_root = os.path.join(root_path, "third_party/silabs/simplicity_sdk/")
+
+# SLC needs to run the system python, so we force PATH to have /usr/bin in front
+# This is a workaround for CI builds failing with an odd `jinja2` module error when
+# leaving the default paths enabled
+cmds = f"""
+set -ex
+
+export PATH="/usr/bin:$PATH"
+
+slc configuration --sdk '{sisdk_root}'
+slc signature trust --sdk '{sisdk_root}'
+slc generate '{slcp_file_path}' -d '{output_path}' --with '{slc_arguments}'
+""".strip()
+
+
+# make sure we have a configured and trusted gsdk in slc
+subprocess.run(["bash", "-c", cmds], check=True)
 
 # cleanup of unwanted files
 fileList = glob.glob(os.path.join(output_path, "matter-platform.*"))

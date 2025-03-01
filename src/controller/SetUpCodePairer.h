@@ -36,7 +36,7 @@
 #include <setup_payload/QRCodeSetupPayloadParser.h>
 
 #if CONFIG_NETWORK_LAYER_BLE
-#include <ble/BleLayer.h>
+#include <ble/Ble.h>
 #endif // CONFIG_NETWORK_BLE
 
 #include <controller/DeviceDiscoveryDelegate.h>
@@ -51,6 +51,7 @@ class DeviceCommissioner;
 class SetUpCodePairerParameters : public RendezvousParameters
 {
 public:
+    SetUpCodePairerParameters() = default;
     SetUpCodePairerParameters(const Dnssd::CommonResolutionData & data, size_t index);
 #if CONFIG_NETWORK_LAYER_BLE
     SetUpCodePairerParameters(BLE_CONNECTION_OBJECT connObj, bool connected = true);
@@ -75,12 +76,13 @@ enum class DiscoveryType : uint8_t
 class DLL_EXPORT SetUpCodePairer : public DevicePairingDelegate
 {
 public:
-    SetUpCodePairer(DeviceCommissioner * commissioner) : mCommissioner(commissioner) { ResetDiscoveryState(); }
-    virtual ~SetUpCodePairer() {}
+    SetUpCodePairer(DeviceCommissioner * commissioner) : mCommissioner(commissioner) {}
+    ~SetUpCodePairer();
 
     CHIP_ERROR PairDevice(chip::NodeId remoteId, const char * setUpCode,
-                          SetupCodePairerBehaviour connectionType = SetupCodePairerBehaviour::kCommission,
-                          DiscoveryType discoveryType             = DiscoveryType::kAll);
+                          SetupCodePairerBehaviour connectionType              = SetupCodePairerBehaviour::kCommission,
+                          DiscoveryType discoveryType                          = DiscoveryType::kAll,
+                          Optional<Dnssd::CommonResolutionData> resolutionData = NullOptional);
 
     // Called by the DeviceCommissioner to notify that we have discovered a new device.
     void NotifyCommissionableDeviceDiscovered(const chip::Dnssd::DiscoveredNodeData & nodeData);
@@ -91,9 +93,9 @@ public:
     void SetBleLayer(Ble::BleLayer * bleLayer) { mBleLayer = bleLayer; };
 #endif // CONFIG_NETWORK_LAYER_BLE
 
-    // Called to notify us that the DeviceCommissioner is shutting down and we
-    // should not try to do any more new work.
-    void CommissionerShuttingDown();
+    // Stop ongoing discovery / pairing of the specified node, or of
+    // whichever node we're pairing if kUndefinedNodeId is passed.
+    bool StopPairing(NodeId remoteId = kUndefinedNodeId);
 
 private:
     // DevicePairingDelegate implementation.
@@ -109,6 +111,8 @@ private:
     CHIP_ERROR StopConnectOverIP();
     CHIP_ERROR StartDiscoverOverSoftAP(SetupPayload & payload);
     CHIP_ERROR StopConnectOverSoftAP();
+    CHIP_ERROR StartDiscoverOverWiFiPAF(SetupPayload & payload);
+    CHIP_ERROR StopConnectOverWiFiPAF();
 
     // Returns whether we have kicked off a new connection attempt.
     bool ConnectToDiscoveredDevice();
@@ -148,8 +152,11 @@ private:
         kBLETransport = 0,
         kIPTransport,
         kSoftAPTransport,
+        kWiFiPAFTransport,
         kTransportTypeCount,
     };
+
+    void NotifyCommissionableDeviceDiscovered(const chip::Dnssd::CommonResolutionData & resolutionData);
 
     static void OnDeviceDiscoveredTimeoutCallback(System::Layer * layer, void * context);
 
@@ -161,6 +168,12 @@ private:
     static void OnDiscoveredDeviceOverBleSuccess(void * appState, BLE_CONNECTION_OBJECT connObj);
     static void OnDiscoveredDeviceOverBleError(void * appState, CHIP_ERROR err);
 #endif // CONFIG_NETWORK_LAYER_BLE
+#if CHIP_DEVICE_CONFIG_ENABLE_WIFIPAF
+    void OnDiscoveredDeviceOverWifiPAF();
+    void OnWifiPAFDiscoveryError(CHIP_ERROR err);
+    static void OnWiFiPAFSubscribeComplete(void * appState);
+    static void OnWiFiPAFSubscribeError(void * appState, CHIP_ERROR err);
+#endif
 
     bool NodeMatchesCurrentFilter(const Dnssd::DiscoveredNodeData & nodeData) const;
     static bool IdIsPresent(uint16_t vendorOrProductID);
@@ -173,9 +186,9 @@ private:
     uint16_t mPayloadVendorID               = kNotAvailable;
     uint16_t mPayloadProductID              = kNotAvailable;
 
-    DeviceCommissioner * mCommissioner = nullptr;
-    System::Layer * mSystemLayer       = nullptr;
-    chip::NodeId mRemoteId;
+    DeviceCommissioner * mCommissioner       = nullptr;
+    System::Layer * mSystemLayer             = nullptr;
+    chip::NodeId mRemoteId                   = kUndefinedNodeId;
     uint32_t mSetUpPINCode                   = 0;
     SetupCodePairerBehaviour mConnectionType = SetupCodePairerBehaviour::kCommission;
     DiscoveryType mDiscoveryType             = DiscoveryType::kAll;
