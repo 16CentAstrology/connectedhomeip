@@ -8,11 +8,13 @@ import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import chip.devicecontroller.ChipDeviceController
+import chip.devicecontroller.ChipICDClient
 import chip.devicecontroller.UnpairDeviceCallback
 import com.google.chip.chiptool.ChipClient
 import com.google.chip.chiptool.R
 import com.google.chip.chiptool.clusterclient.AddressUpdateFragment
 import com.google.chip.chiptool.databinding.UnpairDeviceFragmentBinding
+import com.google.chip.chiptool.util.DeviceIdUtil
 import kotlinx.coroutines.*
 
 class UnpairDeviceFragment : Fragment() {
@@ -24,7 +26,8 @@ class UnpairDeviceFragment : Fragment() {
   private lateinit var addressUpdateFragment: AddressUpdateFragment
 
   private var _binding: UnpairDeviceFragmentBinding? = null
-  private val binding get() = _binding!!
+  private val binding
+    get() = _binding!!
 
   override fun onCreateView(
     inflater: LayoutInflater,
@@ -57,13 +60,28 @@ class UnpairDeviceFragment : Fragment() {
     }
   }
 
-  private  fun unpairDeviceClick() {
-    deviceController.unpairDeviceCallback(addressUpdateFragment.deviceId, ChipUnpairDeviceCallback())
-  }
+  private fun unpairDeviceClick() {
+    deviceController.unpairDeviceCallback(
+      addressUpdateFragment.deviceId,
+      ChipUnpairDeviceCallback()
+    )
 
+    // Remove ICD Client info
+    if (addressUpdateFragment.isICDDevice()) {
+      ChipICDClient.clearICDClientInfo(deviceController.fabricIndex, addressUpdateFragment.deviceId)
+
+      Log.d(TAG, "ICDClientInfo : ${ChipICDClient.getICDClientInfo(deviceController.fabricIndex)}")
+    }
+    requireActivity().runOnUiThread {
+      Log.d(TAG, "remove : ${addressUpdateFragment.deviceId}")
+      DeviceIdUtil.removeCommissionedNodeId(requireContext(), addressUpdateFragment.deviceId)
+      addressUpdateFragment.updateDeviceIdSpinner()
+    }
+  }
 
   companion object {
     private const val TAG = "UnpairDeviceFragment"
+
     fun newInstance(): UnpairDeviceFragment = UnpairDeviceFragment()
   }
 }

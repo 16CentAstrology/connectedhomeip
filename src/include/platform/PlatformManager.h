@@ -24,7 +24,7 @@
 #pragma once
 
 #include <platform/AttributeList.h>
-#include <platform/CHIPDeviceBuildConfig.h>
+#include <platform/CHIPDeviceConfig.h>
 #include <platform/CHIPDeviceEvent.h>
 #include <system/PlatformEventSupport.h>
 #include <system/SystemLayer.h>
@@ -45,7 +45,6 @@ class ConfigurationManagerImpl;
 class DeviceControlServer;
 class TraitManager;
 class ThreadStackManagerImpl;
-class TimeSyncManager;
 
 namespace Internal {
 class BLEManagerImpl;
@@ -53,6 +52,8 @@ template <class>
 class GenericConfigurationManagerImpl;
 template <class>
 class GenericPlatformManagerImpl;
+template <class>
+class GenericPlatformManagerImpl_CMSISOS;
 template <class>
 class GenericPlatformManagerImpl_FreeRTOS;
 template <class>
@@ -258,10 +259,11 @@ private:
     friend class FailSafeContext;
     friend class TraitManager;
     friend class ThreadStackManagerImpl;
-    friend class TimeSyncManager;
     friend class Internal::BLEManagerImpl;
     template <class>
     friend class Internal::GenericPlatformManagerImpl;
+    template <class>
+    friend class Internal::GenericPlatformManagerImpl_CMSISOS;
     template <class>
     friend class Internal::GenericPlatformManagerImpl_FreeRTOS;
     template <class>
@@ -287,8 +289,8 @@ protected:
     ~PlatformManager() = default;
 
     // No copy, move or assignment.
-    PlatformManager(const PlatformManager &)  = delete;
-    PlatformManager(const PlatformManager &&) = delete;
+    PlatformManager(const PlatformManager &)             = delete;
+    PlatformManager(const PlatformManager &&)            = delete;
     PlatformManager & operator=(const PlatformManager &) = delete;
 };
 

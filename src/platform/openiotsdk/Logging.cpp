@@ -22,11 +22,11 @@
  *          for Open IOT SDK platform.
  */
 
+#include <platform/logging/LogV.h>
+
 #include <lib/core/CHIPConfig.h>
-#include <lib/support/EnforceFormat.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <lib/support/logging/Constants.h>
-#include <platform/logging/LogV.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -48,18 +48,11 @@ namespace Logging {
 namespace Platform {
 
 /**
- * Logging static buffer
- */
-namespace {
-char logMsgBuffer[CHIP_CONFIG_LOG_MESSAGE_MAX_SIZE];
-}
-
-/**
  * CHIP log output functions.
  */
-void ENFORCE_FORMAT(3, 0) LogV(const char * module, uint8_t category, const char * msg, va_list v)
+void LogV(const char * module, uint8_t category, const char * msg, va_list v)
 {
-    vsnprintf(logMsgBuffer, sizeof(logMsgBuffer), msg, v);
+    char logMsgBuffer[CHIP_CONFIG_LOG_MESSAGE_MAX_SIZE];
 
     const char * category_prefix;
     switch (category)
@@ -79,7 +72,10 @@ void ENFORCE_FORMAT(3, 0) LogV(const char * module, uint8_t category, const char
         break;
     }
 
-    printf("%s [%s] %s\r\n", category_prefix, module, logMsgBuffer);
+    int header_len  = snprintf(logMsgBuffer, sizeof(logMsgBuffer), "%s [%s] ", category_prefix, module);
+    int content_len = vsnprintf(logMsgBuffer + header_len, sizeof(logMsgBuffer) - header_len, msg, v);
+    int trailer_len = snprintf(logMsgBuffer + header_len + content_len, sizeof(logMsgBuffer) - header_len - content_len, "\r\n");
+    fwrite(logMsgBuffer, header_len + content_len + trailer_len, 1, stdout);
 
     // Let the application know that a log message has been emitted.
     DeviceLayer::OnLogOutput();

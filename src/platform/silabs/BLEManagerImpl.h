@@ -24,30 +24,15 @@
 
 #pragma once
 #if CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
-
-#ifdef RSI_BLE_ENABLE
-#define BLE_MIN_CONNECTION_INTERVAL_MS 45 // 45 msec
-#define BLE_MAX_CONNECTION_INTERVAL_MS 45 // 45 msec
-#define BLE_SLAVE_LATENCY_MS 0
-#define BLE_TIMEOUT_MS 400
-#endif // RSI_BLE_ENABLE
 #include "FreeRTOS.h"
 #include "timers.h"
-#ifdef RSI_BLE_ENABLE
-#ifdef __cplusplus
-extern "C" {
-#endif
-#include <rsi_ble.h>
-#include <rsi_ble_apis.h>
-#include <rsi_bt_common.h>
-#ifdef __cplusplus
-}
-#endif
+#if (SLI_SI91X_ENABLE_BLE || RSI_BLE_ENABLE)
+#include "wfx_sl_ble_init.h"
 #else
 #include "gatt_db.h"
 #include "sl_bgapi.h"
 #include "sl_bt_api.h"
-#endif // RSI_BLE_ENABLE
+#endif // (SLI_SI91X_ENABLE_BLE || RSI_BLE_ENABLE)
 
 namespace chip {
 namespace DeviceLayer {
@@ -64,29 +49,33 @@ class BLEManagerImpl final : public BLEManager, private BleLayer, private BlePla
 public:
     void HandleBootEvent(void);
 
-#ifdef RSI_BLE_ENABLE
-    void HandleConnectEvent(void);
-    void HandleConnectionCloseEvent(uint16_t reason);
-    void HandleWriteEvent(rsi_ble_event_write_t evt);
-    void UpdateMtu(rsi_ble_event_mtu_t evt);
+#if (SLI_SI91X_ENABLE_BLE || RSI_BLE_ENABLE)
+    // Used for posting the event in the BLE queue
+    void BlePostEvent(SilabsBleWrapper::BleEvent_t * event);
+    void HandleConnectEvent(const SilabsBleWrapper::sl_wfx_msg_t & evt);
+    void HandleConnectionCloseEvent(const SilabsBleWrapper::sl_wfx_msg_t & evt);
+    void HandleWriteEvent(const SilabsBleWrapper::sl_wfx_msg_t & evt);
+    void UpdateMtu(const SilabsBleWrapper::sl_wfx_msg_t & evt);
     void HandleTxConfirmationEvent(BLE_CONNECTION_OBJECT conId);
-    void HandleTXCharCCCDWrite(rsi_ble_event_write_t * evt);
+    void HandleTXCharCCCDWrite(const SilabsBleWrapper::sl_wfx_msg_t & evt);
     void HandleSoftTimerEvent(void);
-    CHIP_ERROR StartAdvertising(void);
+    int32_t SendBLEAdvertisementCommand(void);
 #else
     void HandleConnectEvent(volatile sl_bt_msg_t * evt);
+    void HandleConnectParams(volatile sl_bt_msg_t * evt);
     void HandleConnectionCloseEvent(volatile sl_bt_msg_t * evt);
     void HandleWriteEvent(volatile sl_bt_msg_t * evt);
     void UpdateMtu(volatile sl_bt_msg_t * evt);
     void HandleTxConfirmationEvent(BLE_CONNECTION_OBJECT conId);
     void HandleTXCharCCCDWrite(volatile sl_bt_msg_t * evt);
     void HandleSoftTimerEvent(volatile sl_bt_msg_t * evt);
+#endif // RSI_BLE_ENABLEHandleConnectEvent
     CHIP_ERROR StartAdvertising(void);
-#endif // RSI_BLE_ENABLE
+    CHIP_ERROR StopAdvertising(void);
 
 #if CHIP_ENABLE_ADDITIONAL_DATA_ADVERTISING
-#ifdef RSI_BLE_ENABLE
-    static void HandleC3ReadRequest(void);
+#if (SLI_SI91X_ENABLE_BLE || RSI_BLE_ENABLE)
+    static void HandleC3ReadRequest(SilabsBleWrapper::sl_wfx_msg_t * rsi_ble_read_req);
 #else
 #if CHIP_ENABLE_ADDITIONAL_DATA_ADVERTISING
     static void HandleC3ReadRequest(volatile sl_bt_msg_t * evt);
@@ -98,6 +87,14 @@ private:
     // Allow the BLEManager interface class to delegate method calls to
     // the implementation methods provided by this class.
     friend BLEManager;
+
+#if (SLI_SI91X_ENABLE_BLE || RSI_BLE_ENABLE)
+    // rs91x BLE task handling
+    osMessageQueueId_t sBleEventQueue = NULL;
+    static void sl_ble_event_handling_task(void * args);
+    void sl_ble_init();
+    void ProcessEvent(SilabsBleWrapper::BleEvent_t inEvent);
+#endif
 
     // ===== Members that implement the BLEManager internal interface.
 
@@ -115,20 +112,16 @@ private:
 
     // ===== Members that implement virtual methods on BlePlatformDelegate.
 
-    bool SubscribeCharacteristic(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId,
-                                 const Ble::ChipBleUUID * charId) override;
-    bool UnsubscribeCharacteristic(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId,
-                                   const Ble::ChipBleUUID * charId) override;
-    bool CloseConnection(BLE_CONNECTION_OBJECT conId) override;
+    CHIP_ERROR SubscribeCharacteristic(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId,
+                                       const Ble::ChipBleUUID * charId) override;
+    CHIP_ERROR UnsubscribeCharacteristic(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId,
+                                         const Ble::ChipBleUUID * charId) override;
+    CHIP_ERROR CloseConnection(BLE_CONNECTION_OBJECT conId) override;
     uint16_t GetMTU(BLE_CONNECTION_OBJECT conId) const override;
-    bool SendIndication(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
-                        System::PacketBufferHandle pBuf) override;
-    bool SendWriteRequest(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
-                          System::PacketBufferHandle pBuf) override;
-    bool SendReadRequest(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
-                         System::PacketBufferHandle pBuf) override;
-    bool SendReadResponse(BLE_CONNECTION_OBJECT conId, BLE_READ_REQUEST_CONTEXT requestContext, const Ble::ChipBleUUID * svcId,
-                          const Ble::ChipBleUUID * charId) override;
+    CHIP_ERROR SendIndication(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
+                              System::PacketBufferHandle pBuf) override;
+    CHIP_ERROR SendWriteRequest(BLE_CONNECTION_OBJECT conId, const Ble::ChipBleUUID * svcId, const Ble::ChipBleUUID * charId,
+                                System::PacketBufferHandle pBuf) override;
 
     // ===== Members that implement virtual methods on BleApplicationDelegate.
 
@@ -142,29 +135,30 @@ private:
     static BLEManagerImpl sInstance;
 
     // ===== Private members reserved for use by this class only.
-
     enum class Flags : uint16_t
     {
-        kAdvertisingEnabled     = 0x0001,
-        kFastAdvertisingEnabled = 0x0002,
-        kAdvertising            = 0x0004,
-        kRestartAdvertising     = 0x0008,
-        kEFRBLEStackInitialized = 0x0010,
-        kDeviceNameSet          = 0x0020,
+        kAdvertisingEnabled       = 0x0001,
+        kFastAdvertisingEnabled   = 0x0002,
+        kAdvertising              = 0x0004,
+        kRestartAdvertising       = 0x0008,
+        kSiLabsBLEStackInitialize = 0x0010,
+        kDeviceNameSet            = 0x0020,
+        kExtAdvertisingEnabled    = 0x0040,
     };
 
     enum
     {
         kMaxConnections      = BLE_LAYER_NUM_BLE_ENDPOINTS,
-        kMaxDeviceNameLength = 16,
+        kMaxDeviceNameLength = 21,
         kUnusedIndex         = 0xFF,
     };
 
+    static constexpr uint8_t kFlagTlvSize       = 3; // 1 byte for length, 1b for type and 1b for the Flag value
+    static constexpr uint8_t kUUIDTlvSize       = 4; // 1 byte for length, 1b for type and 2b for the UUID value
+    static constexpr uint8_t kDeviceNameTlvSize = (2 + kMaxDeviceNameLength); // 1 byte for length, 1b for type and + device name
+
     struct CHIPoBLEConState
     {
-#ifndef RSI_BLE_ENABLE
-        bd_addr address;
-#endif
         uint16_t mtu : 10;
         uint16_t allocated : 1;
         uint16_t subscribed : 1;
@@ -187,13 +181,12 @@ private:
     CHIP_ERROR MapBLEError(int bleErr);
     void DriveBLEState(void);
     CHIP_ERROR ConfigureAdvertisingData(void);
-    CHIP_ERROR StopAdvertising(void);
 #if CHIP_ENABLE_ADDITIONAL_DATA_ADVERTISING
     CHIP_ERROR EncodeAdditionalDataTlv();
 #endif
 
-#ifdef RSI_BLE_ENABLE
-    void HandleRXCharWrite(rsi_ble_event_write_t * evt);
+#if (SLI_SI91X_ENABLE_BLE || RSI_BLE_ENABLE)
+    void HandleRXCharWrite(const SilabsBleWrapper::sl_wfx_msg_t & evt);
 #else
     void HandleRXCharWrite(volatile sl_bt_msg_t * evt);
 #endif
@@ -203,8 +196,13 @@ private:
     void CancelBleAdvTimeoutTimer(void);
     CHIPoBLEConState * GetConnectionState(uint8_t conId, bool allocate = false);
     static void DriveBLEState(intptr_t arg);
-    static void BleAdvTimeoutHandler(TimerHandle_t xTimer);
+    static void BleAdvTimeoutHandler(void * arg);
     uint8_t GetTimerHandle(uint8_t connectionHandle, bool allocate);
+
+#if (SLI_SI91X_ENABLE_BLE || RSI_BLE_ENABLE)
+protected:
+    static void OnSendIndicationTimeout(System::Layer * aLayer, void * appState);
+#endif
 };
 
 /**

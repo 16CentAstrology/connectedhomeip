@@ -22,14 +22,21 @@ import java.util.Objects;
 
 /** An event path that should be used for requests. */
 public class ChipEventPath {
-  private ChipPathId endpointId, clusterId, eventId;
-  private boolean isUrgent;
+  private final ChipPathId endpointId, clusterId, eventId;
+  private final boolean isUrgent;
 
   private ChipEventPath(
       ChipPathId endpointId, ChipPathId clusterId, ChipPathId eventId, boolean isUrgent) {
     this.endpointId = endpointId;
     this.clusterId = clusterId;
     this.eventId = eventId;
+    this.isUrgent = isUrgent;
+  }
+
+  ChipEventPath(int endpointId, long clusterId, long eventId, boolean isUrgent) {
+    this.endpointId = ChipPathId.forId(endpointId);
+    this.clusterId = ChipPathId.forId(clusterId);
+    this.eventId = ChipPathId.forId(eventId);
     this.isUrgent = isUrgent;
   }
 
@@ -43,6 +50,19 @@ public class ChipEventPath {
 
   public ChipPathId getEventId() {
     return eventId;
+  }
+
+  // For use in JNI.
+  private long getEndpointId(long wildcardValue) {
+    return endpointId.getId(wildcardValue);
+  }
+
+  private long getClusterId(long wildcardValue) {
+    return clusterId.getId(wildcardValue);
+  }
+
+  private long getEventId(long wildcardValue) {
+    return eventId.getId(wildcardValue);
   }
 
   public boolean isUrgent() {
@@ -83,7 +103,7 @@ public class ChipEventPath {
   }
 
   /** Create a new {@link ChipEventPath} with only concrete ids. */
-  public static ChipEventPath newInstance(long endpointId, long clusterId, long eventId) {
+  public static ChipEventPath newInstance(int endpointId, long clusterId, long eventId) {
     return new ChipEventPath(
         ChipPathId.forId(endpointId),
         ChipPathId.forId(clusterId),
@@ -98,7 +118,7 @@ public class ChipEventPath {
 
   /** Create a new {@link ChipEventPath} with only concrete ids. */
   public static ChipEventPath newInstance(
-      long endpointId, long clusterId, long eventId, boolean isUrgent) {
+      int endpointId, long clusterId, long eventId, boolean isUrgent) {
     return new ChipEventPath(
         ChipPathId.forId(endpointId),
         ChipPathId.forId(clusterId),

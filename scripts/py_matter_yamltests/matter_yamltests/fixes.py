@@ -60,7 +60,7 @@ def try_apply_yaml_unrepresentable_integer_for_javascript_fixes(value):
     if type(value) is str:
         try:
             value = int(value)
-        except:
+        except ValueError:
             pass
     return value
 
@@ -85,7 +85,11 @@ def convert_yaml_octet_string_to_bytes(s: str) -> bytes:
     if s.startswith('hex:'):
         return binascii.unhexlify(s[4:])
 
-    # Step 2: convert non-hex-prefixed to bytes
+    # Step 2: handle explicit "base64:" prefix
+    if s.startswith('base64:'):
+        return binascii.a2b_base64(s[7:])
+
+    # Step 3: convert non-hex-prefixed to bytes
     # TODO(#23669): This does not properly support utf8 octet strings. We mimic
     # javascript codegen behavior. Behavior of javascript is:
     #   * Octet string character >= u+0200 errors out.
@@ -96,6 +100,28 @@ def convert_yaml_octet_string_to_bytes(s: str) -> bytes:
         raise ValueError('Unsupported char in octet string %r' % as_bytes)
     accumulated_hex = ''.join([f"{(v & 0xFF):02x}" for v in as_bytes])
     return binascii.unhexlify(accumulated_hex)
+
+
+def fix_typed_yaml_value(value):
+    """Applies fixups to typed runtime variables if necessary."""
+    if type(value) is dict:
+        mapping_type = value.get('type')
+        default_value = value.get('defaultValue')
+        if mapping_type is not None and default_value is not None:
+            value = default_value
+            if mapping_type == 'int64u' or mapping_type == 'int64s' or mapping_type == 'bitmap64' or mapping_type == 'epoch_us':
+                value = try_apply_float_to_integer_fix(value)
+                value = try_apply_yaml_cpp_longlong_limitation_fix(value)
+                value = try_apply_yaml_unrepresentable_integer_for_javascript_fixes(value)
+            elif mapping_type == 'single' or mapping_type == 'double':
+                value = try_apply_yaml_float_written_as_strings(value)
+            elif isinstance(value, float) and mapping_type != 'single' and mapping_type != 'double':
+                value = try_apply_float_to_integer_fix(value)
+            elif mapping_type == 'octet_string' or mapping_type == 'long_octet_string':
+                value = convert_yaml_octet_string_to_bytes(value)
+            elif mapping_type == 'boolean':
+                value = bool(value)
+    return value
 
 
 def add_yaml_support_for_scientific_notation_without_dot(loader):

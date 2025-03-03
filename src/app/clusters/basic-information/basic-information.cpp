@@ -20,17 +20,21 @@
 
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <app-common/zap-generated/cluster-objects.h>
-#include <app/DataModelRevision.h>
+#include <app/AttributeAccessInterfaceRegistry.h>
 #include <app/EventLogging.h>
 #include <app/InteractionModelEngine.h>
+#include <app/SpecificationDefinedRevisions.h>
 #include <app/util/attribute-storage.h>
+#include <lib/core/CHIPConfig.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/ConfigurationManager.h>
 #include <platform/DeviceInstanceInfoProvider.h>
 #include <platform/PlatformManager.h>
+#include <protocols/interaction_model/StatusCode.h>
 
 #include <cstddef>
 #include <cstring>
+#include <tracing/macros.h>
 
 using namespace chip;
 using namespace chip::app;
@@ -38,6 +42,7 @@ using namespace chip::app::Clusters;
 using namespace chip::app::Clusters::BasicInformation;
 using namespace chip::app::Clusters::BasicInformation::Attributes;
 using namespace chip::DeviceLayer;
+using chip::Protocols::InteractionModel::Status;
 
 namespace {
 
@@ -58,6 +63,9 @@ private:
     CHIP_ERROR ReadDataModelRevision(AttributeValueEncoder & aEncoder);
     CHIP_ERROR ReadLocation(AttributeValueEncoder & aEncoder);
     CHIP_ERROR WriteLocation(AttributeValueDecoder & aDecoder);
+    CHIP_ERROR ReadProductAppearance(AttributeValueEncoder & aEncoder);
+    CHIP_ERROR ReadSpecificationVersion(AttributeValueEncoder & aEncoder);
+    CHIP_ERROR ReadMaxPathsPerInvoke(AttributeValueEncoder & aEncoder);
 };
 
 BasicAttrAccess gAttrAccess;
@@ -281,6 +289,21 @@ CHIP_ERROR BasicAttrAccess::Read(const ConcreteReadAttributePath & aPath, Attrib
         break;
     }
 
+    case ProductAppearance::Id: {
+        status = ReadProductAppearance(aEncoder);
+        break;
+    }
+
+    case SpecificationVersion::Id: {
+        status = ReadSpecificationVersion(aEncoder);
+        break;
+    }
+
+    case MaxPathsPerInvoke::Id: {
+        status = ReadMaxPathsPerInvoke(aEncoder);
+        break;
+    }
+
     default:
         // We did not find a processing path, the caller will delegate elsewhere.
         break;
@@ -291,7 +314,7 @@ CHIP_ERROR BasicAttrAccess::Read(const ConcreteReadAttributePath & aPath, Attrib
 
 CHIP_ERROR BasicAttrAccess::ReadDataModelRevision(AttributeValueEncoder & aEncoder)
 {
-    uint16_t revision = CHIP_DEVICE_DATA_MODEL_REVISION;
+    uint16_t revision = Revision::kDataModelRevision;
     return aEncoder.Encode(revision);
 }
 
@@ -319,7 +342,7 @@ CHIP_ERROR BasicAttrAccess::Write(const ConcreteDataAttributePath & aPath, Attri
 
     switch (aPath.mAttributeId)
     {
-    case Location::Id: {
+    case Attributes::Location::Id: {
         CHIP_ERROR err = WriteLocation(aDecoder);
 
         return err;
@@ -338,15 +361,59 @@ CHIP_ERROR BasicAttrAccess::WriteLocation(AttributeValueDecoder & aDecoder)
     ReturnErrorOnFailure(aDecoder.Decode(location));
 
     bool isValidLength = location.size() == DeviceLayer::ConfigurationManager::kMaxLocationLength;
-    VerifyOrReturnError(isValidLength, StatusIB(Protocols::InteractionModel::Status::InvalidValue).ToChipError());
+    if (!isValidLength)
+    {
+        ChipLogError(Zcl, "Invalid country code: '%.*s'", static_cast<int>(location.size()), location.data());
+        return CHIP_IM_GLOBAL_STATUS(ConstraintError);
+    }
 
     return DeviceLayer::ConfigurationMgr().StoreCountryCode(location.data(), location.size());
+}
+
+CHIP_ERROR BasicAttrAccess::ReadProductAppearance(AttributeValueEncoder & aEncoder)
+{
+    auto * provider = GetDeviceInstanceInfoProvider();
+    ProductFinishEnum finish;
+    ReturnErrorOnFailure(provider->GetProductFinish(&finish));
+
+    ColorEnum color;
+    CHIP_ERROR colorStatus = provider->GetProductPrimaryColor(&color);
+    if (colorStatus != CHIP_NO_ERROR && colorStatus != CHIP_ERROR_NOT_IMPLEMENTED)
+    {
+        return colorStatus;
+    }
+
+    Structs::ProductAppearanceStruct::Type productAppearance;
+    productAppearance.finish = finish;
+    if (colorStatus == CHIP_NO_ERROR)
+    {
+        productAppearance.primaryColor.SetNonNull(color);
+    }
+    else
+    {
+        productAppearance.primaryColor.SetNull();
+    }
+
+    return aEncoder.Encode(productAppearance);
+}
+
+CHIP_ERROR BasicAttrAccess::ReadSpecificationVersion(AttributeValueEncoder & aEncoder)
+{
+    uint32_t specification_version = Revision::kSpecificationVersion;
+    return aEncoder.Encode(specification_version);
+}
+
+CHIP_ERROR BasicAttrAccess::ReadMaxPathsPerInvoke(AttributeValueEncoder & aEncoder)
+{
+    uint16_t max_path_per_invoke = CHIP_CONFIG_MAX_PATHS_PER_INVOKE;
+    return aEncoder.Encode(max_path_per_invoke);
 }
 
 class PlatformMgrDelegate : public DeviceLayer::PlatformManagerDelegate
 {
     void OnStartUp(uint32_t softwareVersion) override
     {
+        MATTER_TRACE_INSTANT("OnStartUp", "BasicInfo");
         // The StartUp event SHALL be emitted by a Node after completing a boot or reboot process
         ChipLogDetail(Zcl, "Emitting StartUp event");
 
@@ -366,6 +433,7 @@ class PlatformMgrDelegate : public DeviceLayer::PlatformManagerDelegate
 
     void OnShutDown() override
     {
+        MATTER_TRACE_INSTANT("OnShutDown", "BasicInfo");
         // The ShutDown event SHOULD be emitted on a best-effort basis by a Node prior to any orderly shutdown sequence.
         ChipLogDetail(Zcl, "Emitting ShutDown event");
 
@@ -397,19 +465,17 @@ namespace Clusters {
 namespace BasicInformation {
 bool IsLocalConfigDisabled()
 {
-    bool disabled        = false;
-    EmberAfStatus status = LocalConfigDisabled::Get(0, &disabled);
-    return status == EMBER_ZCL_STATUS_SUCCESS && disabled;
+    bool disabled = false;
+    Status status = LocalConfigDisabled::Get(0, &disabled);
+    return status == Status::Success && disabled;
 }
 } // namespace BasicInformation
 } // namespace Clusters
 } // namespace app
 } // namespace chip
 
-void emberAfBasicInformationClusterServerInitCallback(chip::EndpointId endpoint) {}
-
 void MatterBasicInformationPluginServerInitCallback()
 {
-    registerAttributeAccessOverride(&gAttrAccess);
+    AttributeAccessInterfaceRegistry::Instance().Register(&gAttrAccess);
     PlatformMgr().SetDelegate(&gPlatformMgrDelegate);
 }

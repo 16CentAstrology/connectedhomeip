@@ -18,97 +18,48 @@
 
 #pragma once
 
-#include "AppConfig.h"
-#include "AppEvent.h"
-#if CONFIG_CHIP_ENABLE_APPLICATION_STATUS_LED
-#include "LEDWidget.h"
-#endif
-#include "PWMDevice.h"
-#include <platform/CHIPDeviceLayer.h>
+#include "AppTaskCommon.h"
 
-#if CONFIG_CHIP_FACTORY_DATA
-#include <platform/telink/FactoryDataProvider.h>
-#endif
-
-#ifdef CONFIG_CHIP_PW_RPC
-#include "Rpc.h"
-#endif
-
-#include <cstdint>
-
-struct k_timer;
-struct Identify;
-
-class AppTask
+class AppTask : public AppTaskCommon
 {
 public:
-    CHIP_ERROR StartApp(void);
-
-    void SetInitiateAction(PWMDevice::Action_t aAction, int32_t aActor, uint8_t * value);
-    void PostEvent(AppEvent * aEvent);
-    void UpdateClusterState(void);
-    PWMDevice & GetPWMDevice(void) { return mPwmRgbBlueLed; }
-
-    enum ButtonId_t
+    enum Fixture_Action : uint8_t
     {
-        kButtonId_LightingAction = 1,
-        kButtonId_FactoryReset,
-        kButtonId_StartThread,
-        kButtonId_StartBleAdv
-    } ButtonId;
+        ON_ACTION = 0,
+        OFF_ACTION,
+        LEVEL_ACTION,
+        COLOR_ACTION_XY,
+        COLOR_ACTION_HSV,
+        COLOR_ACTION_CT,
 
-    static void IdentifyEffectHandler(EmberAfIdentifyEffectIdentifier aEffect);
+        INVALID_ACTION
+    };
+
+#ifdef CONFIG_CHIP_ENABLE_POWER_ON_FACTORY_RESET
+    void PowerOnFactoryReset(void);
+#endif /* CONFIG_CHIP_ENABLE_POWER_ON_FACTORY_RESET */
+
+    bool IsTurnedOn() const;
+    void SetInitiateAction(Fixture_Action aAction, int32_t aActor, uint8_t * value);
+    void UpdateClusterState(void);
 
 private:
-#ifdef CONFIG_CHIP_PW_RPC
-    friend class chip::rpc::TelinkButton;
-#endif
     friend AppTask & GetAppTask(void);
+    friend class AppTaskCommon;
+
     CHIP_ERROR Init(void);
+    void LinkLeds(LedManager & ledManager);
 
-    static void ActionInitiated(PWMDevice::Action_t aAction, int32_t aActor);
-    static void ActionCompleted(PWMDevice::Action_t aAction, int32_t aActor);
-    static void ActionIdentifyStateUpdateHandler(k_timer * timer);
-
-    void DispatchEvent(AppEvent * event);
-
-#if CONFIG_CHIP_ENABLE_APPLICATION_STATUS_LED
-    static void UpdateLedStateEventHandler(AppEvent * aEvent);
-    static void LEDStateUpdateHandler(LEDWidget * ledWidget);
-    static void UpdateStatusLED();
-#endif
-    static void LightingActionButtonEventHandler(void);
-    static void FactoryResetButtonEventHandler(void);
-    static void StartThreadButtonEventHandler(void);
-    static void StartBleAdvButtonEventHandler(void);
-
-    static void ChipEventHandler(const chip::DeviceLayer::ChipDeviceEvent * event, intptr_t arg);
-
-    static void FactoryResetTimerTimeoutCallback(k_timer * timer);
-
-    static void FactoryResetTimerEventHandler(AppEvent * aEvent);
-    static void FactoryResetHandler(AppEvent * aEvent);
-    static void StartThreadHandler(AppEvent * aEvent);
     static void LightingActionEventHandler(AppEvent * aEvent);
-    static void StartBleAdvHandler(AppEvent * aEvent);
-    static void UpdateIdentifyStateEventHandler(AppEvent * aEvent);
+#ifdef CONFIG_CHIP_ENABLE_POWER_ON_FACTORY_RESET
+    static void PowerOnFactoryResetEventHandler(AppEvent * aEvent);
+    static void PowerOnFactoryResetTimerEvent(struct k_timer * dummy);
 
-    static void ButtonEventHandler(ButtonId_t btnId, bool btnPressed);
-    static void InitButtons(void);
-
-    static void ThreadProvisioningHandler(const chip::DeviceLayer::ChipDeviceEvent * event, intptr_t arg);
+    static unsigned int sPowerOnFactoryResetTimerCnt;
+    static k_timer sPowerOnFactoryResetTimer;
+#endif /* CONFIG_CHIP_ENABLE_POWER_ON_FACTORY_RESET */
 
     static AppTask sAppTask;
-    PWMDevice mPwmRgbBlueLed;
-#if USE_RGB_PWM
-    PWMDevice mPwmRgbGreenLed;
-    PWMDevice mPwmRgbRedLed;
-#endif
-    PWMDevice mPwmIdentifyLed;
-
-#if CONFIG_CHIP_FACTORY_DATA
-    chip::DeviceLayer::FactoryDataProvider<chip::DeviceLayer::ExternalFlashFactoryData> mFactoryDataProvider;
-#endif
 };
 
 inline AppTask & GetAppTask(void)

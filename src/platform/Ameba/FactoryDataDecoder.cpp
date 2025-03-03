@@ -17,30 +17,40 @@
 
 #include "FactoryDataDecoder.h"
 #include "chip_porting.h"
+#include <platform/Ameba/AmebaUtils.h>
 #include <platform/internal/CHIPDeviceLayerInternal.h>
+
+using namespace chip::DeviceLayer::Internal;
 
 namespace chip {
 namespace DeviceLayer {
 
 CHIP_ERROR FactoryDataDecoder::ReadFactoryData(uint8_t * buffer, uint16_t * pfactorydata_len)
 {
-    uint32_t ret = 0;
-    ret          = ReadFactory(buffer, pfactorydata_len);
-    if (ret != 1)
-        return CHIP_ERROR_INTERNAL;
+    int32_t error  = ReadFactory(buffer, pfactorydata_len);
+    CHIP_ERROR err = AmebaUtils::MapError(error, AmebaErrorType::kFlashError);
 
-    return CHIP_NO_ERROR;
+    return err;
 }
 
 CHIP_ERROR FactoryDataDecoder::DecodeFactoryData(uint8_t * buffer, FactoryData * fdata, uint16_t factorydata_len)
 {
-    uint32_t ret = 0;
-    ret          = DecodeFactory(buffer, fdata, factorydata_len);
-    if (ret != 0)
-        return CHIP_ERROR_INTERNAL;
+    int32_t error  = DecodeFactory(buffer, fdata, factorydata_len);
+    CHIP_ERROR err = AmebaUtils::MapError(error, AmebaErrorType::kFlashError);
 
-    return CHIP_NO_ERROR;
+    return err;
 }
+
+#if CONFIG_ENABLE_AMEBA_CRYPTO
+CHIP_ERROR FactoryDataDecoder::GetSign(uint8_t * PublicKeyData, size_t PublicKeySize, const unsigned char * MessageData,
+                                       size_t MessageSize, unsigned char * Signature)
+{
+    int32_t error  = matter_get_signature(PublicKeyData, PublicKeySize, MessageData, MessageSize, Signature);
+    CHIP_ERROR err = CHIP_NO_ERROR;
+
+    return err;
+}
+#endif
 
 } // namespace DeviceLayer
 } // namespace chip

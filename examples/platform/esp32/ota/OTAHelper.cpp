@@ -49,6 +49,15 @@ chip::Optional<bool> gRequestorCanConsent;
 static chip::ota::UserConsentState gUserConsentState = chip::ota::UserConsentState::kUnknown;
 chip::ota::DefaultOTARequestorUserConsent gUserConsentProvider;
 
+// WARNING: This is just an example for using key for decrypting the encrypted OTA image
+// Please do not use it as is for production use cases
+#if CONFIG_ENABLE_ENCRYPTED_OTA
+extern const char sOTADecryptionKeyStart[] asm("_binary_esp_image_encryption_key_pem_start");
+extern const char sOTADecryptionKeyEnd[] asm("_binary_esp_image_encryption_key_pem_end");
+
+CharSpan sOTADecryptionKey(sOTADecryptionKeyStart, sOTADecryptionKeyEnd - sOTADecryptionKeyStart);
+#endif // CONFIG_ENABLE_ENCRYPTED_OTA
+
 } // namespace
 
 bool CustomOTARequestorDriver::CanConsent()
@@ -66,6 +75,10 @@ void OTAHelpers::InitOTARequestor()
         gImageProcessor.SetOTADownloader(&gDownloader);
         gDownloader.SetImageProcessorDelegate(&gImageProcessor);
         gRequestorUser.Init(&gRequestorCore, &gImageProcessor);
+
+#if CONFIG_ENABLE_ENCRYPTED_OTA
+        gImageProcessor.InitEncryptedOTA(sOTADecryptionKey);
+#endif // CONFIG_ENABLE_ENCRYPTED_OTA
 
         if (gUserConsentState != chip::ota::UserConsentState::kUnknown)
         {
@@ -158,7 +171,7 @@ void OTARequestorCommands::Register()
 
     };
 
-    sSubShell.RegisterCommands(subCommands, ArraySize(subCommands));
+    sSubShell.RegisterCommands(subCommands, MATTER_ARRAY_SIZE(subCommands));
 
     // Register the root `OTA Requestor` command in the top-level shell.
     static const shell_command_t otaRequestorCommand = { &OTARequestorHandler, "OTARequestor", "OTA Requestor commands" };

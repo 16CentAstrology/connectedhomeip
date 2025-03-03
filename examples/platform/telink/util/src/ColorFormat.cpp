@@ -116,9 +116,9 @@ RgbColor_t XYToRgb(uint8_t Level, uint16_t currentX, uint16_t currentY)
     b = (X * 0.0557f) - (Y * 0.2040f) + (Z * 1.0570f);
 
     // apply gamma 2.2 correction
-    r = (r <= 0.0031308f ? 12.92f * r : (1.055f) * pow(r, (1.0f / 2.4f)) - 0.055f);
-    g = (g <= 0.0031308f ? 12.92f * g : (1.055f) * pow(g, (1.0f / 2.4f)) - 0.055f);
-    b = (b <= 0.0031308f ? 12.92f * b : (1.055f) * pow(b, (1.0f / 2.4f)) - 0.055f);
+    r = (r <= 0.0031308f ? 12.92f * r : (1.055f) * powf(r, (1.0f / 2.4f)) - 0.055f);
+    g = (g <= 0.0031308f ? 12.92f * g : (1.055f) * powf(g, (1.0f / 2.4f)) - 0.055f);
+    b = (b <= 0.0031308f ? 12.92f * b : (1.055f) * powf(b, (1.0f / 2.4f)) - 0.055f);
 
     // Round off
     r = clamp(r, 0, 1);
@@ -126,9 +126,9 @@ RgbColor_t XYToRgb(uint8_t Level, uint16_t currentX, uint16_t currentY)
     b = clamp(b, 0, 1);
 
     // these rgb values are in  the range of 0 to 1, convert to limit of HW specific LED
-    rgb.r = (uint8_t)(r * 255);
-    rgb.g = (uint8_t)(g * 255);
-    rgb.b = (uint8_t)(b * 255);
+    rgb.r = (uint8_t) (r * 255);
+    rgb.g = (uint8_t) (g * 255);
+    rgb.b = (uint8_t) (b * 255);
 
     return rgb;
 }
@@ -150,17 +150,17 @@ RgbColor_t CTToRgb(CtColor_t ct)
     }
     else
     {
-        r = 329.698727446f * pow(ctCentiKelvin - 60, -0.1332047592f);
+        r = 329.698727446f * powf(ctCentiKelvin - 60, -0.1332047592f);
     }
 
     // Green
     if (ctCentiKelvin <= 66)
     {
-        g = 99.4708025861f * log(ctCentiKelvin) - 161.1195681661f;
+        g = 99.4708025861f * logf(ctCentiKelvin) - 161.1195681661f;
     }
     else
     {
-        g = 288.1221695283f * pow(ctCentiKelvin - 60, -0.0755148492f);
+        g = 288.1221695283f * powf(ctCentiKelvin - 60, -0.0755148492f);
     }
 
     // Blue
