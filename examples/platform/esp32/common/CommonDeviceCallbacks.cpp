@@ -16,30 +16,20 @@
  *    limitations under the License.
  */
 #include "CommonDeviceCallbacks.h"
-
-#if CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
-#if CONFIG_BT_ENABLED
-#include "esp_bt.h"
-#if CONFIG_BT_NIMBLE_ENABLED
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
-#include "esp_nimble_hci.h"
-#endif // ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
-#include "nimble/nimble_port.h"
-#endif // CONFIG_BT_NIMBLE_ENABLED
-#endif // CONFIG_BT_ENABLED
-#endif // CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
+#include "Esp32AppServer.h"
 
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include <app/server/Dnssd.h>
+#include <app/server/Server.h>
 #include <app/util/util.h>
 #include <lib/support/CodeUtils.h>
 #if CONFIG_ENABLE_OTA_REQUESTOR
 #include <ota/OTAHelper.h>
 #endif
 
-static const char * TAG = "app-devicecallbacks";
+static const char TAG[] = "app-devicecallbacks";
 
 using namespace chip;
 using namespace chip::DeviceLayer;
@@ -51,6 +41,10 @@ void CommonDeviceCallbacks::DeviceEventCallback(const ChipDeviceEvent * event, i
 {
     switch (event->Type)
     {
+    case DeviceEventType::kBLEDeinitialized:
+        ESP_LOGI(TAG, "BLE is deinitialized");
+        break;
+
     case DeviceEventType::kInternetConnectivityChange:
         OnInternetConnectivityChange(event);
         break;
@@ -76,34 +70,7 @@ void CommonDeviceCallbacks::DeviceEventCallback(const ChipDeviceEvent * event, i
 
     case DeviceEventType::kCommissioningComplete: {
         ESP_LOGI(TAG, "Commissioning complete");
-#if CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE && CONFIG_BT_NIMBLE_ENABLED && CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING
-
-        if (ble_hs_is_enabled())
-        {
-            int ret       = nimble_port_stop();
-            esp_err_t err = ESP_OK;
-            if (ret == 0)
-            {
-                nimble_port_deinit();
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
-                err = esp_nimble_hci_and_controller_deinit();
-#endif // ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
-                err += esp_bt_mem_release(ESP_BT_MODE_BTDM);
-                if (err == ESP_OK)
-                {
-                    ESP_LOGI(TAG, "BLE deinit successful and memory reclaimed");
-                }
-            }
-            else
-            {
-                ESP_LOGW(TAG, "nimble_port_stop() failed");
-            }
-        }
-        else
-        {
-            ESP_LOGI(TAG, "BLE already deinited");
-        }
-#endif
+        Esp32AppServer::DeInitBLEIfCommissioned();
     }
     break;
 
@@ -116,6 +83,14 @@ void CommonDeviceCallbacks::DeviceEventCallback(const ChipDeviceEvent * event, i
             // connectivity. MDNS still wants to refresh its listening interfaces to include the
             // newly selected address.
             chip::app::DnssdServer::Instance().StartServer();
+        }
+        if (event->InterfaceIpAddressChanged.Type == InterfaceIpChangeType::kIpV6_Assigned)
+        {
+            appDelegate = DeviceCallbacksDelegate::Instance().GetAppDelegate();
+            if (appDelegate != nullptr)
+            {
+                appDelegate->OnIPv6ConnectivityEstablished();
+            }
         }
         break;
     }

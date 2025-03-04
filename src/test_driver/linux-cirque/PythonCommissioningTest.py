@@ -17,9 +17,7 @@ limitations under the License.
 
 import logging
 import os
-import pprint
 import sys
-import time
 
 from helper.CHIPTestBase import CHIPVirtualHome
 
@@ -45,7 +43,7 @@ MATTER_DEVELOPMENT_PAA_ROOT_CERTS = "credentials/development/paa-root-certs"
 DEVICE_CONFIG = {
     'device0': {
         'type': 'MobileDevice',
-        'base_image': 'connectedhomeip/chip-cirque-device-base',
+        'base_image': '@default',
         'capability': ['TrafficControl', 'Mount'],
         'rcp_mode': True,
         'docker_network': 'Ipv6',
@@ -54,7 +52,7 @@ DEVICE_CONFIG = {
     },
     'device1': {
         'type': 'CHIPEndDevice',
-        'base_image': 'connectedhomeip/chip-cirque-device-base',
+        'base_image': '@default',
         'capability': ['Thread', 'TrafficControl', 'Mount'],
         'rcp_mode': True,
         'docker_network': 'Ipv6',
@@ -63,7 +61,7 @@ DEVICE_CONFIG = {
     },
     'device2': {
         'type': 'CHIPEndDevice',
-        'base_image': 'connectedhomeip/chip-cirque-device-base',
+        'base_image': '@default',
         'capability': ['Thread', 'TrafficControl', 'Mount'],
         'rcp_mode': True,
         'docker_network': 'Ipv6',
@@ -106,11 +104,11 @@ class TestCommissioner(CHIPVirtualHome):
 
         req_device_id = req_ids[0]
 
-        self.execute_device_cmd(req_device_id, "pip3 install {}".format(os.path.join(
+        self.execute_device_cmd(req_device_id, "pip3 install --break-system-packages {}".format(os.path.join(
             CHIP_REPO, "out/debug/linux_x64_gcc/controller/python/chip_clusters-0.0-py3-none-any.whl")))
-        self.execute_device_cmd(req_device_id, "pip3 install {}".format(os.path.join(
+        self.execute_device_cmd(req_device_id, "pip3 install --break-system-packages {}".format(os.path.join(
             CHIP_REPO, "out/debug/linux_x64_gcc/controller/python/chip_core-0.0-cp37-abi3-linux_x86_64.whl")))
-        self.execute_device_cmd(req_device_id, "pip3 install {}".format(os.path.join(
+        self.execute_device_cmd(req_device_id, "pip3 install --break-system-packages {}".format(os.path.join(
             CHIP_REPO, "out/debug/linux_x64_gcc/controller/python/chip_repl-0.0-py3-none-any.whl")))
 
         command = "gdb -return-child-result -q -ex run -ex bt --args python3 {} -t 150 -d {} --paa-trust-store-path {} --nodeid {}".format(

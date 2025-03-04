@@ -28,10 +28,10 @@
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app/CommandHandler.h>
 #include <app/server/Dnssd.h>
-#include <app/util/af.h>
 #include <app/util/basic-types.h>
 #include <app/util/util.h>
 #include <lib/dnssd/Advertiser.h>
+#include <platform/Ameba/AmebaUtils.h>
 #include <route_hook/ameba_route_hook.h>
 #include <support/CodeUtils.h>
 #include <support/logging/CHIPLogging.h>
@@ -43,7 +43,7 @@
 #include "Globals.h"
 #include "LEDWidget.h"
 
-static const char * TAG = "app-devicecallbacks";
+static const char TAG[] = "app-devicecallbacks";
 
 using namespace ::chip;
 using namespace ::chip::Inet;
@@ -103,6 +103,7 @@ void DeviceCallbacks::DeviceEventCallback(const ChipDeviceEvent * event, intptr_
 
     case DeviceEventType::kCommissioningComplete:
         ChipLogProgress(DeviceLayer, "Commissioning Complete");
+        chip::DeviceLayer::Internal::AmebaUtils::SetCurrentProvisionedNetwork();
         break;
     }
 }
@@ -112,10 +113,6 @@ void DeviceCallbacks::PostAttributeChangeCallback(EndpointId endpointId, Cluster
 {
     switch (clusterId)
     {
-    case OnOffSwitchConfiguration::Id:
-        OnOffSwitchConfigurationAttributeChangeCallback(endpointId, attributeId, type, value, size);
-        break;
-
     case Identify::Id:
         OnIdentifyPostAttributeChangeCallback(endpointId, attributeId, value);
         break;
@@ -142,8 +139,9 @@ void DeviceCallbacks::OnInternetConnectivityChange(const ChipDeviceEvent * event
         chip::app::DnssdServer::Instance().StartServer();
 #if CHIP_DEVICE_CONFIG_ENABLE_OTA_REQUESTOR
         // Init OTA requestor only when we have gotten IPv6 address
-        if (OTAInitializer::Instance().CheckInit())
+        if (!OTAInitializer::Instance().CheckInit())
         {
+            ChipLogProgress(DeviceLayer, "Initializing OTA");
             chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(kInitOTARequestorDelaySec),
                                                         InitOTARequestorHandler, nullptr);
         }
@@ -153,13 +151,6 @@ void DeviceCallbacks::OnInternetConnectivityChange(const ChipDeviceEvent * event
     {
         ChipLogProgress(DeviceLayer, "Lost IPv6 connectivity...");
     }
-}
-
-void DeviceCallbacks::OnOffSwitchConfigurationAttributeChangeCallback(EndpointId endpointId, AttributeId attributeId, uint8_t type,
-                                                                      uint8_t * value, uint16_t size)
-{
-    ChipLogProgress(Zcl, "OnOff Switch Configuration attribute ID: " ChipLogFormatMEI " Type: %u Value: %u, length %u",
-                    ChipLogValueMEI(attributeId), type, *value, size);
 }
 
 void IdentifyTimerHandler(Layer * systemLayer, void * appState, CHIP_ERROR error)

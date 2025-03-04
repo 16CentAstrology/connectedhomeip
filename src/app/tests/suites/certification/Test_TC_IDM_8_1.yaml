@@ -369,7 +369,7 @@ tests:
           DUT implementation required to verify the  list of structs which contain some fabric-sensitive data
 
 
-          If the Vendor DUT doesn"t implement/supported this attribute, Please mark the test step as "Not Applicable"
+          If the Vendor DUT doesn't implement/supported this attribute, Please mark the test step as "\Not Applicable\"
       disabled: true
 
     - label:
@@ -433,7 +433,7 @@ tests:
 
 
           #3: From RC1 send a Write Request message to the DUT to write to an entry in the fabric scoped list associated with its own fabric.
-          accesscontrol write acl "[{"fabricIndex": 1, "privilege": 5, "authMode": 2, "subjects": [112233], "targets":[{ "cluster": 31, "endpoint": 0, "deviceType": null }]}]" 1 0
+          accesscontrol write acl '[{"fabricIndex": 1, "privilege": 5, "authMode": 2, "subjects": [112233], "targets":[{ "cluster": 31, "endpoint": 0, "deviceType": null }]}]' 1 0
           ON RC1 Verify that the DUT sends a changed report data
           [1660742282.279163][9069:9074] CHIP:TOO: Endpoint: 0 Cluster: 0x0000_001F Event 0x0000_0000
           [1660742282.279187][9069:9074] CHIP:TOO:   Event number: 3
@@ -575,20 +575,4 @@ tests:
           [1660742276.568897][17561:17566] CHIP:TOO:    }
           [1660742276.568954][17561:17566] CHIP:DMG: MoveToState ReadClient[0x7f8624024eb0]: Moving to [AwaitingSu]
           [1660742276.568986][17561:17566] CHIP:EM: Piggybacking Ack for MessageCounter:39674556 on exchange: 26542i
-      disabled: true
-
-    - label:
-          "RC1 sends Subscribe Request Message to DUT with EventRequests set to
-          path where an event in the path is fabric-sensitive and the associated
-          fabric does not match the accessing fabric."
-      verification: |
-          Mark this as not testable /NA. Out of Scope for V1.1
-      disabled: true
-
-    - label:
-          "RC1 sends Read Request Message to DUT with EventRequests set to path
-          where an event in the path is fabric-sensitive and the associated
-          fabric does not match the accessing fabric."
-      verification: |
-          Mark this as not testable /NA. Out of Scope for V1.0
       disabled: true

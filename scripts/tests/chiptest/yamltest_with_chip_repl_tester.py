@@ -16,6 +16,7 @@
 
 import asyncio
 import atexit
+import functools
 import logging
 import os
 import tempfile
@@ -23,7 +24,9 @@ import traceback
 
 # isort: off
 
-from chip import ChipDeviceCtrl  # Needed before chip.FabricAdmin
+# F401 is "Module imported but unused" line will be ignored by linter
+# ChipDeviceCtrl is not used directly in this file but it is needed
+from chip import ChipDeviceCtrl  # noqa: F401 # Needed before chip.FabricAdmin
 import chip.FabricAdmin  # Needed before chip.CertificateAuthority
 
 # isort: on
@@ -31,7 +34,7 @@ import chip.FabricAdmin  # Needed before chip.CertificateAuthority
 # ensure matter IDL is availale for import, otherwise set relative paths
 try:
     from matter_idl import matter_idl_types
-except:
+except ImportError:
     SCRIPT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     import sys
 
@@ -40,11 +43,13 @@ except:
 
     from matter_idl import matter_idl_types
 
+    __ALL__ = (matter_idl_types)
+
 
 import chip.CertificateAuthority
 import chip.native
 import click
-from chip.ChipStack import *
+from chip.ChipStack import ChipStack
 from chip.yaml.runner import ReplTestRunner
 from matter_yamltests.definitions import SpecDefinitionsFromPaths
 from matter_yamltests.parser import PostProcessCheckStatus, TestParser, TestParserConfig
@@ -53,6 +58,8 @@ _DEFAULT_CHIP_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _CLUSTER_XML_DIRECTORY_PATH = os.path.abspath(
     os.path.join(_DEFAULT_CHIP_ROOT, "src/app/zap-templates/zcl/data-model/"))
+
+certificateAuthorityManager = None
 
 
 async def execute_test(yaml, runner):
@@ -70,12 +77,19 @@ async def execute_test(yaml, runner):
         post_processing_result = test_step.post_process_response(
             decoded_response)
         if not post_processing_result.is_success():
-            logging.warning(f"Test step failure in 'test_step.label'")
+            logging.warning(f"Test step failure in {test_step.label}")
             for entry in post_processing_result.entries:
                 if entry.state == PostProcessCheckStatus.SUCCESS:
                     continue
                 logging.warning("%s: %s", entry.state, entry.message)
             raise Exception(f'Test step failed {test_step.label}')
+
+
+def asyncio_executor(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        return asyncio.run(f(*args, **kwargs))
+    return wrapper
 
 
 @click.command()
@@ -95,7 +109,8 @@ async def execute_test(yaml, runner):
     '--pics-file',
     default=None,
     help='Optional PICS file')
-def main(setup_code, yaml_path, node_id, pics_file):
+@asyncio_executor
+async def main(setup_code, yaml_path, node_id, pics_file):
     # Setting up python environment for running YAML CI tests using python parser.
     with tempfile.NamedTemporaryFile() as chip_stack_storage:
         chip.native.Init()
@@ -116,7 +131,7 @@ def main(setup_code, yaml_path, node_id, pics_file):
         # Creating and commissioning to a single controller to match what is currently done when
         # running.
         dev_ctrl = ca_list[0].adminList[0].NewController()
-        dev_ctrl.CommissionWithCode(setup_code, node_id)
+        await dev_ctrl.CommissionWithCode(setup_code, node_id)
 
         def _StackShutDown():
             # Tearing down chip stack. If not done in the correct order test will fail.
@@ -137,7 +152,7 @@ def main(setup_code, yaml_path, node_id, pics_file):
             runner = ReplTestRunner(
                 clusters_definitions, certificate_authority_manager, dev_ctrl)
 
-            asyncio.run(execute_test(yaml, runner))
+            await execute_test(yaml, runner)
 
         except Exception:
             print(traceback.format_exc())

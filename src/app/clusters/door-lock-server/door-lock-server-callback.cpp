@@ -26,7 +26,6 @@
 #include <app-common/zap-generated/callback.h>
 #include <app/EventLogging.h>
 #include <app/server/Server.h>
-#include <app/util/af.h>
 #include <cinttypes>
 
 #include <app/CommandHandler.h>
@@ -45,14 +44,27 @@ using namespace chip::app::Clusters::DoorLock;
 // =============================================================================
 
 bool __attribute__((weak))
-emberAfPluginDoorLockOnDoorLockCommand(chip::EndpointId endpointId, const Optional<ByteSpan> & pinCode, OperationErrorEnum & err)
+emberAfPluginDoorLockOnDoorLockCommand(chip::EndpointId endpointId, const Nullable<chip::FabricIndex> & fabricIdx,
+                                       const Nullable<chip::NodeId> & nodeId, const Optional<ByteSpan> & pinCode,
+                                       OperationErrorEnum & err)
 {
     err = OperationErrorEnum::kUnspecified;
     return false;
 }
 
 bool __attribute__((weak))
-emberAfPluginDoorLockOnDoorUnlockCommand(chip::EndpointId endpointId, const Optional<ByteSpan> & pinCode, OperationErrorEnum & err)
+emberAfPluginDoorLockOnDoorUnlockCommand(chip::EndpointId endpointId, const Nullable<chip::FabricIndex> & fabricIdx,
+                                         const Nullable<chip::NodeId> & nodeId, const Optional<ByteSpan> & pinCode,
+                                         OperationErrorEnum & err)
+{
+    err = OperationErrorEnum::kUnspecified;
+    return false;
+}
+
+bool __attribute__((weak))
+emberAfPluginDoorLockOnDoorUnboltCommand(chip::EndpointId endpointId, const Nullable<chip::FabricIndex> & fabricIdx,
+                                         const Nullable<chip::NodeId> & nodeId, const Optional<ByteSpan> & pinCode,
+                                         OperationErrorEnum & err)
 {
     err = OperationErrorEnum::kUnspecified;
     return false;

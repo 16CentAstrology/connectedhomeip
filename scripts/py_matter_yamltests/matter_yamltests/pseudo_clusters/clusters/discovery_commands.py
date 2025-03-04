@@ -68,11 +68,14 @@ _DEFINITION = '''<?xml version="1.0"?>
         <arg name="rotatingIdLen" type="int64u"/>
         <arg name="pairingHint" type="int16u"/>
         <arg name="pairingInstruction" type="char_string"/>
-        <arg name="supportsTcp" type="boolean"/>
+        <arg name="supportsTcpClient" type="boolean"/>
+        <arg name="supportsTcpServer" type="boolean"/>
         <arg name="numIPs" type="int8u"/>
         <arg name="port" type="int16u"/>
         <arg name="mrpRetryIntervalIdle" type="int32u" optional="true"/>
         <arg name="mrpRetryIntervalActive" type="int32u" optional="true"/>
+        <arg name="mrpRetryActiveThreshold" type="int16u" optional="true"/>
+        <arg name="isICDOperatingAsLIT" type="boolean" optional="true"/>
     </command>
 </cluster>
 </configurator>

@@ -18,12 +18,14 @@
 
 #pragma once
 
+#include <app/AppConfig.h>
 #include <app/BufferedReadCallback.h>
 #include <app/ConcreteAttributePath.h>
 #include <app/data-model/Decode.h>
 #include <functional>
 #include <lib/support/CHIPMem.h>
 
+#if CHIP_CONFIG_ENABLE_READ_CLIENT
 namespace chip {
 namespace Controller {
 
@@ -41,8 +43,8 @@ namespace Controller {
  *     encapsulate a StatusIB).  This could be a path-specific error or it
  *     could be a general error for the entire request; the distinction is not
  *     that important, because we only have one path involved.  If the
- *     CHIP_ERROR encapsulates a StatusIB, StatusIB::InitFromChipError can be
- *     used to extract the status.
+ *     CHIP_ERROR encapsulates a StatusIB, constructing a StatusIB from it will
+ *     extract the status.
  */
 template <typename DecodableAttributeType>
 class TypedReadAttributeCallback final : public app::ReadClient::Callback
@@ -290,3 +292,4 @@ private:
 
 } // namespace Controller
 } // namespace chip
+#endif // CHIP_CONFIG_ENABLE_READ_CLIENT
