@@ -23,10 +23,6 @@
  *
  */
 
-#ifndef __STDC_LIMIT_MACROS
-#define __STDC_LIMIT_MACROS
-#endif
-
 #include <inet/InetInterface.h>
 
 #include <inet/IPPrefix.h>
@@ -42,7 +38,7 @@
 #include <lwip/tcpip.h>
 #endif // CHIP_SYSTEM_CONFIG_USE_LWIP
 
-#if CHIP_SYSTEM_CONFIG_USE_SOCKETS && CHIP_SYSTEM_CONFIG_USE_BSD_IFADDRS
+#if (CHIP_SYSTEM_CONFIG_USE_SOCKETS || CHIP_SYSTEM_CONFIG_USE_NETWORK_FRAMEWORK) && CHIP_SYSTEM_CONFIG_USE_BSD_IFADDRS
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -50,10 +46,11 @@
 #ifdef HAVE_SYS_SOCKIO_H
 #include <sys/sockio.h>
 #endif /* HAVE_SYS_SOCKIO_H */
+#include "InetInterfaceImpl.h"
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
-#endif // CHIP_SYSTEM_CONFIG_USE_SOCKETS && CHIP_SYSTEM_CONFIG_USE_BSD_IFADDRS
+#endif // (CHIP_SYSTEM_CONFIG_USE_SOCKETS || CHIP_SYSTEM_CONFIG_USE_NETWORK_FRAMEWORK) && CHIP_SYSTEM_CONFIG_USE_BSD_IFADDRS
 
 #if CHIP_SYSTEM_CONFIG_USE_ZEPHYR_NET_IF
 #include <zephyr/net/net_if.h>
@@ -112,6 +109,23 @@ bool InterfaceIterator::Next()
     return false;
 }
 
+CHIP_ERROR InterfaceIterator::GetInterfaceName(char * nameBuf, size_t nameBufSize)
+{
+    VerifyOrReturnError(HasCurrent(), CHIP_ERROR_INCORRECT_STATE);
+    return InterfaceId(1).GetInterfaceName(nameBuf, nameBufSize);
+}
+
+InterfaceId InterfaceIterator::GetInterfaceId()
+{
+    // only 1 interface is supported
+    return HasCurrent() ? InterfaceId(1) : InterfaceId::Null();
+}
+
+bool InterfaceIterator::IsUp()
+{
+    return HasCurrent() && (otThreadGetDeviceRole(Inet::globalOtInstance) != OT_DEVICE_ROLE_DISABLED);
+}
+
 InterfaceAddressIterator::InterfaceAddressIterator()
 {
     mNetifAddrList = nullptr;
@@ -127,6 +141,8 @@ bool InterfaceAddressIterator::Next()
 {
     if (mNetifAddrList == nullptr)
     {
+        if (Inet::globalOtInstance == nullptr)
+            return false;
         mNetifAddrList = otIp6GetUnicastAddresses(Inet::globalOtInstance);
         mCurAddr       = mNetifAddrList;
     }
@@ -152,6 +168,22 @@ uint8_t InterfaceAddressIterator::GetPrefixLength()
 {
     // Only 64 bits prefix are supported
     return 64;
+}
+
+bool InterfaceAddressIterator::IsUp()
+{
+    return HasCurrent() && (otThreadGetDeviceRole(Inet::globalOtInstance) != OT_DEVICE_ROLE_DISABLED);
+}
+
+InterfaceId InterfaceAddressIterator::GetInterfaceId()
+{
+    // only 1 interface is supported
+    return HasCurrent() ? InterfaceId(1) : InterfaceId::Null();
+}
+
+bool InterfaceAddressIterator::HasBroadcastAddress()
+{
+    return HasCurrent() && (otIp6GetMulticastAddresses(Inet::globalOtInstance) != nullptr);
 }
 
 #endif
@@ -216,7 +248,7 @@ bool InterfaceIterator::Next()
 #if defined(NETIF_FOREACH)
     NETIF_FOREACH(mCurNetif)
 #else
-    for (mCurNetif = netif_list; mCurNetif != NULL; mCurNetif = mCurNetif->next)
+    for (mCurNetif = netif_list; mCurNetif != nullptr; mCurNetif = mCurNetif->next)
 #endif
     {
         if (mCurNetif == prevNetif)
@@ -229,7 +261,7 @@ bool InterfaceIterator::Next()
     // Unlock LwIP stack
     UNLOCK_TCPIP_CORE();
 
-    return mCurNetif != NULL;
+    return mCurNetif != nullptr;
 }
 
 CHIP_ERROR InterfaceIterator::GetInterfaceName(char * nameBuf, size_t nameBufSize)
@@ -322,13 +354,11 @@ CHIP_ERROR InterfaceAddressIterator::GetAddress(IPAddress & outIPAddress)
         return CHIP_NO_ERROR;
     }
 #if INET_CONFIG_ENABLE_IPV4 && LWIP_IPV4
-    else
-    {
-        outIPAddress = IPAddress(*netif_ip4_addr(curIntf));
-        return CHIP_NO_ERROR;
-    }
-#endif // INET_CONFIG_ENABLE_IPV4 && LWIP_IPV4
+    outIPAddress = IPAddress(*netif_ip4_addr(curIntf));
+    return CHIP_NO_ERROR;
+#else
     return CHIP_ERROR_INTERNAL;
+#endif // INET_CONFIG_ENABLE_IPV4 && LWIP_IPV4
 }
 
 uint8_t InterfaceAddressIterator::GetPrefixLength()
@@ -340,11 +370,8 @@ uint8_t InterfaceAddressIterator::GetPrefixLength()
             return 64;
         }
 #if INET_CONFIG_ENABLE_IPV4 && LWIP_IPV4
-        else
-        {
-            struct netif * curIntf = mIntfIter.GetInterfaceId().GetPlatformInterface();
-            return NetmaskToPrefixLength((const uint8_t *) netif_ip4_netmask(curIntf), 4);
-        }
+        struct netif * curIntf = mIntfIter.GetInterfaceId().GetPlatformInterface();
+        return NetmaskToPrefixLength((const uint8_t *) netif_ip4_netmask(curIntf), 4);
 #endif // INET_CONFIG_ENABLE_IPV4 && LWIP_IPV4
     }
     return 0;
@@ -407,7 +434,7 @@ CHIP_ERROR InterfaceId::GetLinkLocalAddr(IPAddress * llAddr) const
 
 #endif // CHIP_SYSTEM_CONFIG_USE_LWIP
 
-#if CHIP_SYSTEM_CONFIG_USE_SOCKETS && CHIP_SYSTEM_CONFIG_USE_BSD_IFADDRS
+#if (CHIP_SYSTEM_CONFIG_USE_SOCKETS || CHIP_SYSTEM_CONFIG_USE_NETWORK_FRAMEWORK) && CHIP_SYSTEM_CONFIG_USE_BSD_IFADDRS
 
 CHIP_ERROR InterfaceId::GetInterfaceName(char * nameBuf, size_t nameBufSize) const
 {
@@ -473,12 +500,12 @@ int GetIOCTLSocket()
     {
         int s;
 #ifdef SOCK_CLOEXEC
-        s = socket(AF_INET, SOCK_STREAM, SOCK_CLOEXEC);
+        s = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
         if (s < 0)
 #endif
         {
             s = socket(AF_INET, SOCK_STREAM, 0);
-            fcntl(s, O_CLOEXEC);
+            fcntl(s, F_SETFD, O_CLOEXEC);
         }
 
         if (!__sync_bool_compare_and_swap(&sIOCTLSocket, -1, s))
@@ -519,7 +546,7 @@ InterfaceIterator::~InterfaceIterator()
 {
     if (mIntfArray != nullptr)
     {
-        if_freenameindex(mIntfArray);
+        if_freenameindexImpl(mIntfArray);
         mIntfArray = nullptr;
     }
 }
@@ -533,7 +560,7 @@ bool InterfaceIterator::Next()
 {
     if (mIntfArray == nullptr)
     {
-        mIntfArray = if_nameindex();
+        mIntfArray = if_nameindexImpl();
     }
     else if (mIntfArray[mCurIntf].if_index != 0)
     {
@@ -562,6 +589,11 @@ bool InterfaceIterator::IsUp()
     return (GetFlags() & IFF_UP) != 0;
 }
 
+bool InterfaceIterator::IsLoopback()
+{
+    return (GetFlags() & IFF_LOOPBACK) != 0;
+}
+
 bool InterfaceIterator::SupportsMulticast()
 {
     return (GetFlags() & IFF_MULTICAST) != 0;
@@ -586,7 +618,7 @@ short InterfaceIterator::GetFlags()
             mIntfFlags       = intfData.ifr_flags;
             mIntfFlagsCached = true;
         }
-#if __MBED__
+#ifdef __MBED__
         CloseIOCTLSocket();
 #endif
     }
@@ -670,7 +702,7 @@ uint8_t InterfaceAddressIterator::GetPrefixLength()
     {
         if (mCurAddr->ifa_addr->sa_family == AF_INET6)
         {
-#if !__MBED__
+#ifndef __MBED__
             struct sockaddr_in6 & netmask = *reinterpret_cast<struct sockaddr_in6 *>(mCurAddr->ifa_netmask);
             return NetmaskToPrefixLength(netmask.sin6_addr.s6_addr, 16);
 #else  // __MBED__
@@ -704,6 +736,11 @@ CHIP_ERROR InterfaceAddressIterator::GetInterfaceName(char * nameBuf, size_t nam
 bool InterfaceAddressIterator::IsUp()
 {
     return HasCurrent() && (mCurAddr->ifa_flags & IFF_UP) != 0;
+}
+
+bool InterfaceAddressIterator::IsLoopback()
+{
+    return HasCurrent() && (mCurAddr->ifa_flags & IFF_LOOPBACK) != 0;
 }
 
 bool InterfaceAddressIterator::SupportsMulticast()
@@ -751,7 +788,7 @@ CHIP_ERROR InterfaceId::GetLinkLocalAddr(IPAddress * llAddr) const
     return (found) ? CHIP_NO_ERROR : INET_ERROR_ADDRESS_NOT_FOUND;
 }
 
-#endif // CHIP_SYSTEM_CONFIG_USE_SOCKETS && CHIP_SYSTEM_CONFIG_USE_BSD_IFADDRS
+#endif // (CHIP_SYSTEM_CONFIG_USE_SOCKETS || CHIP_SYSTEM_CONFIG_USE_NETWORK_FRAMEWORK) && CHIP_SYSTEM_CONFIG_USE_BSD_IFADDRS
 
 #if CHIP_SYSTEM_CONFIG_USE_ZEPHYR_NET_IF
 

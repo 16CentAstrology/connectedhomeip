@@ -27,10 +27,10 @@ from __future__ import absolute_import, print_function
 import logging
 import queue
 import time
-from ctypes import *
+from ctypes import CFUNCTYPE, PYFUNCTYPE, c_int, c_void_p, cast, pointer, pythonapi
 
 import objc
-from Foundation import *
+from Foundation import CBUUID, CBCentralManager, NSDefaultRunLoopMode, NSRunLoop
 
 from .ChipBleBase import ChipBleBase
 from .ChipBleUtility import (BLE_ERROR_REMOTE_DEVICE_DISCONNECTED, BLE_SUBSCRIBE_OPERATION_SUBSCRIBE,
@@ -47,7 +47,7 @@ try:
             u"/System/Library/Frameworks/IOBluetooth.framework/Versions/A/Frameworks/CoreBluetooth.framework"
         ),
     )
-except Exception as ex:
+except Exception:
     objc.loadBundle(
         "CoreBluetooth",
         globals(),
@@ -86,7 +86,7 @@ def _VoidPtrToCBUUID(ptr, len):
             + ptr[20:]
         )
         ptr = CBUUID.UUIDWithString_(ptr)
-    except Exception as ex:
+    except Exception:
         print("ERROR: failed to convert void * to CBUUID")
         ptr = None
 
@@ -184,8 +184,6 @@ class CoreBluetoothManager(ChipBleBase):
     def __del__(self):
         self.disconnect()
         self.setInputHook(self.orig_input_hook)
-        self.devCtrl.SetBlockingCB(None)
-        self.devCtrl.SetBleEventCB(None)
 
     def devMgrCB(self):
         """A callback used by ChipDeviceCtrl.py to drive the OSX runloop while the

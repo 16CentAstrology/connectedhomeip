@@ -17,10 +17,9 @@
 
 #pragma once
 
-#include <app/CASESessionManager.h>
 #include <app/OperationalSessionSetup.h>
 #include <lib/support/Pool.h>
-#include <transport/SessionHandle.h>
+#include <transport/Session.h>
 
 namespace chip {
 

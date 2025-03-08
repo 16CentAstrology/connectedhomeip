@@ -19,6 +19,7 @@
 
 #import <Matter/MTRCluster.h>
 #import <Matter/MTRDefines.h>
+#import <Matter/MTRDiagnosticLogsType.h>
 
 @class MTRSetupPayload;
 @class MTRDeviceController;
@@ -41,6 +42,23 @@ NS_ASSUME_NONNULL_BEGIN
  *                MTRDataKey: Data-value NSDictionary object.
  *                              Included when there is data and when there is no error.
  *                              The data-value is described below.
+ *                MTREventNumberKey : NSNumber-wrapped uint64_t value. Monotonically increasing, and consecutive event reports
+ *                                    should have consecutive numbers unless device reboots, or if events are lost.
+ *                                    Only present when both MTREventPathKey and MTRDataKey are present.
+ *                MTREventPriorityKey : NSNumber-wrapped MTREventPriority value.
+ *                                      Only present when both MTREventPathKey and MTRDataKey are present.
+ *                MTREventTimeTypeKey : NSNumber-wrapped MTREventTimeType value.
+ *                                      Only present when both MTREventPathKey and MTRDataKey are present.
+ *                MTREventSystemUpTimeKey : NSNumber-wrapped NSTimeInterval value.
+ *                                          Only present when MTREventTimeTypeKey is MTREventTimeTypeSystemUpTime.
+ *                MTREventTimestampDateKey : NSDate object.
+ *                                           Only present when MTREventTimeTypeKey is MTREventTimeTypeTimestampDate.
+ *                MTREventIsHistoricalKey : NSNumber-wrapped BOOL value.
+ *                                          Value is YES if the event is in the far past or not realtime.
+ *                                          Only present when MTREventPathKey is present.
+ *
+ *                Only one of MTREventTimestampDateKey and MTREventSystemUpTimeKey will be present, depending on the value for
+ *                MTREventTimeTypeKey.
  *
  *                A data-value is an NSDictionary object with the following key values:
  *
@@ -65,7 +83,12 @@ NS_ASSUME_NONNULL_BEGIN
  *                A structure-value is an NSArray object with NSDictionary objects as its elements. Each dictionary element will
  *                contain the following key values.
  *
- *                MTRContextTagKey : NSNumber object as context tag.
+ *                MTRContextTagKey : NSNumber object as context tag.  This can
+ *                                   actually be a fully-qualified profile tag,
+ *                                   but for compatibility it's using the same
+ *                                   key name.  The two types of tags can be
+ *                                   told apart by checking whether the value is
+ *                                   in the context tag range (0 <= tag <= 0xFF).
  *                MTRDataKey : Data-value NSDictionary object.
  *
  *                An array-value is an NSArray object with NSDictionary objects as its elements. Each dictionary element will
@@ -96,27 +119,33 @@ typedef void (^MTRDeviceResubscriptionScheduledHandler)(NSError * error, NSNumbe
 /**
  * Handler for openCommissioningWindowWithSetupPasscode.
  */
-API_AVAILABLE(ios(16.2), macos(13.1), watchos(9.2), tvos(16.2))
+MTR_AVAILABLE(ios(16.2), macos(13.1), watchos(9.2), tvos(16.2))
 typedef void (^MTRDeviceOpenCommissioningWindowHandler)(MTRSetupPayload * _Nullable payload, NSError * _Nullable error);
 
-extern NSString * const MTRAttributePathKey;
-extern NSString * const MTRCommandPathKey;
-extern NSString * const MTREventPathKey;
-extern NSString * const MTRDataKey;
-extern NSString * const MTRErrorKey;
-extern NSString * const MTRTypeKey;
-extern NSString * const MTRValueKey;
-extern NSString * const MTRContextTagKey;
-extern NSString * const MTRSignedIntegerValueType;
-extern NSString * const MTRUnsignedIntegerValueType;
-extern NSString * const MTRBooleanValueType;
-extern NSString * const MTRUTF8StringValueType;
-extern NSString * const MTROctetStringValueType;
-extern NSString * const MTRFloatValueType;
-extern NSString * const MTRDoubleValueType;
-extern NSString * const MTRNullValueType;
-extern NSString * const MTRStructureValueType;
-extern NSString * const MTRArrayValueType;
+MTR_EXTERN NSString * const MTRAttributePathKey MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRCommandPathKey MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTREventPathKey MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRDataKey MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRErrorKey MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRTypeKey MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRValueKey MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRContextTagKey MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRSignedIntegerValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRUnsignedIntegerValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRBooleanValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRUTF8StringValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTROctetStringValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRFloatValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRDoubleValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRNullValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRStructureValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTRArrayValueType MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1));
+MTR_EXTERN NSString * const MTREventNumberKey MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+MTR_EXTERN NSString * const MTREventPriorityKey MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+MTR_EXTERN NSString * const MTREventTimeTypeKey MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+MTR_EXTERN NSString * const MTREventSystemUpTimeKey MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+MTR_EXTERN NSString * const MTREventTimestampDateKey MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+MTR_EXTERN NSString * const MTREventIsHistoricalKey MTR_AVAILABLE(ios(17.3), macos(14.3), watchos(10.3), tvos(17.3));
 
 @class MTRClusterStateCacheContainer;
 @class MTRAttributeCacheContainer;
@@ -128,8 +157,46 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
     MTRTransportTypeUDP,
     MTRTransportTypeBLE,
     MTRTransportTypeTCP,
-} API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+} MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 
+/**
+ * A path indicating an attribute being requested (for read or subscribe).
+ *
+ * nil is used to represent wildcards.
+ */
+NS_SWIFT_SENDABLE
+MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0))
+@interface MTRAttributeRequestPath : NSObject <NSCopying, NSSecureCoding>
+@property (nonatomic, readonly, copy, nullable) NSNumber * endpoint MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+@property (nonatomic, readonly, copy, nullable) NSNumber * cluster MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+@property (nonatomic, readonly, copy, nullable)
+    NSNumber * attribute MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+
++ (MTRAttributeRequestPath *)requestPathWithEndpointID:(NSNumber * _Nullable)endpointID
+                                             clusterID:(NSNumber * _Nullable)clusterID
+                                           attributeID:(NSNumber * _Nullable)attributeID
+    MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+@end
+
+/**
+ * A path indicating an event being requested (for read or subscribe).
+ *
+ * nil is used to represent wildcards.
+ */
+NS_SWIFT_SENDABLE
+MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0))
+@interface MTREventRequestPath : NSObject <NSCopying, NSSecureCoding>
+@property (nonatomic, readonly, copy, nullable) NSNumber * endpoint MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+@property (nonatomic, readonly, copy, nullable) NSNumber * cluster MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+@property (nonatomic, readonly, copy, nullable) NSNumber * event MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+
++ (MTREventRequestPath *)requestPathWithEndpointID:(NSNumber * _Nullable)endpointID
+                                         clusterID:(NSNumber * _Nullable)clusterID
+                                           eventID:(NSNumber * _Nullable)eventID
+    MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+@end
+
+MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1))
 @interface MTRBaseDevice : NSObject
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -143,13 +210,13 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
  */
 + (MTRBaseDevice *)deviceWithNodeID:(NSNumber *)nodeID
                          controller:(MTRDeviceController *)controller
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 
 /**
  * The transport used by the current session with this device, or
  * `MTRTransportTypeUndefined` if no session is currently active.
  */
-@property (readonly) MTRTransportType sessionTransportType API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+@property (readonly) MTRTransportType sessionTransportType MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 
 /**
  * Subscribe to receive attribute reports for everything (all endpoints, all
@@ -168,7 +235,7 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
  * eventReportHandler will be called any time an event is reported (with a
  * non-nil "value")
  *
- * The array passed to eventReportHandler will contain CHIPEventReport
+ * The array passed to eventReportHandler will contain MTREventReport
  * instances.  Errors for specific paths, not the whole subscription, will be
  * reported via those objects.
  *
@@ -198,7 +265,7 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
                   errorHandler:(MTRDeviceErrorHandler)errorHandler
        subscriptionEstablished:(MTRSubscriptionEstablishedHandler _Nullable)subscriptionEstablished
        resubscriptionScheduled:(MTRDeviceResubscriptionScheduledHandler _Nullable)resubscriptionScheduled
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 
 /**
  * Reads attributes from the device.
@@ -227,7 +294,28 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
                               params:(MTRReadParams * _Nullable)params
                                queue:(dispatch_queue_t)queue
                           completion:(MTRDeviceResponseHandler)completion
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+
+/**
+ * Reads multiple attribute or event paths from the device.
+ *
+ * Nil is treated as an empty array for attributePaths and eventPaths.
+ *
+ * Lists of attribute and event paths to read can be provided via attributePaths and eventPaths.
+ *
+ * The completion will be called with an error if the entire read interaction fails. Otherwise it
+ * will be called with an array of values. This array may be empty (e.g. if no paths matched the
+ * wildcard paths passed in, or if empty lists of paths were passed in) or may include per-path
+ * errors if particular paths failed.
+ *
+ * If the sum of the lengths of attributePaths and eventPaths exceeds 9, the read may fail due to the device not supporting that
+ * many read paths.
+ */
+- (void)readAttributePaths:(NSArray<MTRAttributeRequestPath *> * _Nullable)attributePaths
+                eventPaths:(NSArray<MTREventRequestPath *> * _Nullable)eventPaths
+                    params:(MTRReadParams * _Nullable)params
+                     queue:(dispatch_queue_t)queue
+                completion:(MTRDeviceResponseHandler)completion MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
 
 /**
  * Write to attribute in a designated attribute path
@@ -254,7 +342,7 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
                    timedWriteTimeout:(NSNumber * _Nullable)timeoutMs
                                queue:(dispatch_queue_t)queue
                           completion:(MTRDeviceResponseHandler)completion
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 
 /**
  * Invoke a command with a designated command path
@@ -278,7 +366,7 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
                  timedInvokeTimeout:(NSNumber * _Nullable)timeoutMs
                               queue:(dispatch_queue_t)queue
                          completion:(MTRDeviceResponseHandler)completion
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 
 /**
  * Subscribes to the specified attributes on the device.
@@ -295,6 +383,17 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
  *
  * A non-nil attributeID along with a nil clusterID will only succeed if the
  * attribute ID is for a global attribute that applies to all clusters.
+ *
+ * The reportHandler will be called with an error if the subscription fails
+ * entirely.
+ *
+ * The reportHandler will be called with arrays of response-value dictionaries
+ * (which may be data or errors) as path-specific data is received.
+ *
+ * subscriptionEstablished will be called when the subscription is first
+ * successfully established (after the initial set of data reports has been
+ * delivered to reportHandler).  If params allow automatic resubscription, it
+ * will be called any time resubscription succeeds.
  */
 - (void)subscribeToAttributesWithEndpointID:(NSNumber * _Nullable)endpointID
                                   clusterID:(NSNumber * _Nullable)clusterID
@@ -303,7 +402,40 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
                                       queue:(dispatch_queue_t)queue
                               reportHandler:(MTRDeviceResponseHandler)reportHandler
                     subscriptionEstablished:(MTRSubscriptionEstablishedHandler _Nullable)subscriptionEstablished
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+
+/**
+ * Subscribes to multiple attribute or event paths.
+ *
+ * Nil is treated as an empty array for attributePaths and eventPaths.
+ *
+ * Lists of attribute and event paths to subscribe to can be provided via attributePaths and eventPaths.
+ *
+ * The reportHandler will be called with an error if the subscription fails
+ * entirely (including when both attributePaths and eventPaths are empty).
+ *
+ * The reportHandler will be called with arrays of response-value dictionaries
+ * (which may be data or errors) as path-specific data is received.
+ *
+ * subscriptionEstablished will be called when the subscription is first
+ * successfully established (after the initial set of data reports has been
+ * delivered to reportHandler).  If params allow automatic resubscription, it
+ * will be called any time resubscription succeeds.
+ *
+ * resubscriptionScheduled will be called if subscription drop is detected and
+ * params allow automatic resubscription.
+ *
+ * If the sum of the lengths of attributePaths and eventPaths exceeds 3, the subscribe may fail due to the device not supporting
+ * that many paths for a subscription.
+ */
+- (void)subscribeToAttributePaths:(NSArray<MTRAttributeRequestPath *> * _Nullable)attributePaths
+                       eventPaths:(NSArray<MTREventRequestPath *> * _Nullable)eventPaths
+                           params:(MTRSubscribeParams * _Nullable)params
+                            queue:(dispatch_queue_t)queue
+                    reportHandler:(MTRDeviceResponseHandler)reportHandler
+          subscriptionEstablished:(MTRSubscriptionEstablishedHandler _Nullable)subscriptionEstablished
+          resubscriptionScheduled:(MTRDeviceResubscriptionScheduledHandler _Nullable)resubscriptionScheduled
+    MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
 
 /**
  * Deregister all local report handlers for a remote device
@@ -314,7 +446,7 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
  */
 - (void)deregisterReportHandlersWithQueue:(dispatch_queue_t)queue
                                completion:(dispatch_block_t)completion
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 
 /**
  * Open a commissioning window on the device.
@@ -335,7 +467,24 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
                                         duration:(NSNumber *)duration
                                            queue:(dispatch_queue_t)queue
                                       completion:(MTRDeviceOpenCommissioningWindowHandler)completion
-    API_AVAILABLE(ios(16.2), macos(13.1), watchos(9.2), tvos(16.2));
+    MTR_AVAILABLE(ios(16.2), macos(13.1), watchos(9.2), tvos(16.2));
+
+/**
+ * Open a commissioning window on the device, using a random setup passcode.
+ *
+ * On success, completion will be called on queue with the MTRSetupPayload that
+ * can be used to commission the device.
+ *
+ * @param discriminator The discriminator to use for the commissionable
+ *                      advertisement.
+ * @param duration      Duration, in seconds, during which the commissioning
+ *                      window will be open.
+ */
+- (void)openCommissioningWindowWithDiscriminator:(NSNumber *)discriminator
+                                        duration:(NSNumber *)duration
+                                           queue:(dispatch_queue_t)queue
+                                      completion:(MTRDeviceOpenCommissioningWindowHandler)completion
+    MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
 
 /**
  * Reads events from the device.
@@ -362,7 +511,7 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
                           params:(MTRReadParams * _Nullable)params
                            queue:(dispatch_queue_t)queue
                       completion:(MTRDeviceResponseHandler)completion
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 
 /**
  * Subscribes to the specified events on the device.
@@ -376,6 +525,17 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
  *
  * If all of endpointID, clusterID, eventID are nil, all events on the
  * device will be subscribed to.
+ *
+ * The reportHandler will be called with an error if the subscription fails
+ * entirely.
+ *
+ * The reportHandler will be called with arrays of response-value dictionaries
+ * (which may be data or errors) as path-specific data is received.
+ *
+ * subscriptionEstablished will be called when the subscription is first
+ * successfully established (after the initial set of data reports has been
+ * delivered to reportHandler).  If params allow automatic resubscription, it
+ * will be called any time resubscription succeeds.
  */
 - (void)subscribeToEventsWithEndpointID:(NSNumber * _Nullable)endpointID
                               clusterID:(NSNumber * _Nullable)clusterID
@@ -384,15 +544,40 @@ typedef NS_ENUM(uint8_t, MTRTransportType) {
                                   queue:(dispatch_queue_t)queue
                           reportHandler:(MTRDeviceResponseHandler)reportHandler
                 subscriptionEstablished:(MTRSubscriptionEstablishedHandler _Nullable)subscriptionEstablished
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+
+/**
+ * Download log of the desired type from the device.
+ *
+ * Note: The consumer of this API should move the file that the url points to or open it for reading before the
+ * completion handler returns. Otherwise, the file will be deleted, and the data will be lost.
+ *
+ * @param type       The type of log being requested. This should correspond to a value in the enum MTRDiagnosticLogType.
+ * @param timeout    The timeout for getting the log. If the timeout expires, completion will be called with whatever
+ *                   has been retrieved by that point (which might be none or a partial log).
+ *                   If the timeout is set to 0, the request will not expire and completion will not be called until
+ *                   the log is fully retrieved or an error occurs.
+ * @param queue      The queue on which completion will be called.
+ * @param completion The completion handler that is called after attempting to retrieve the requested log.
+ *                     - In case of success, the completion handler is called with a non-nil URL and a nil error.
+ *                     - If there is an error, a non-nil error is used and the url can be non-nil too if some logs have already been downloaded.
+ */
+- (void)downloadLogOfType:(MTRDiagnosticLogType)type
+                  timeout:(NSTimeInterval)timeout
+                    queue:(dispatch_queue_t)queue
+               completion:(void (^)(NSURL * _Nullable url, NSError * _Nullable error))completion
+    MTR_AVAILABLE(ios(17.6), macos(14.6), watchos(10.6), tvos(17.6));
+
 @end
 
 /**
  * A path indicating a specific cluster on a device (i.e. without any
  * wildcards).
  */
-API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
-@interface MTRClusterPath : NSObject <NSCopying>
+NS_SWIFT_SENDABLE
+MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
+@interface MTRClusterPath : NSObject <NSCopying, NSSecureCoding>
+
 @property (nonatomic, readonly, copy) NSNumber * endpoint;
 @property (nonatomic, readonly, copy) NSNumber * cluster;
 
@@ -406,13 +591,16 @@ API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
  * A path indicating a specific attribute on a device (i.e. without any
  * wildcards).
  */
-@interface MTRAttributePath : MTRClusterPath
+NS_SWIFT_SENDABLE
+MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1))
+@interface MTRAttributePath : MTRClusterPath <NSSecureCoding>
+
 @property (nonatomic, readonly, copy) NSNumber * attribute;
 
 + (MTRAttributePath *)attributePathWithEndpointID:(NSNumber *)endpointID
                                         clusterID:(NSNumber *)clusterID
                                       attributeID:(NSNumber *)attributeID
-    API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+    MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 @end
 
 /**
@@ -420,65 +608,166 @@ API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
  * (i.e. without any wildcards).  There can be multiple instances of actual
  * events for a given event path.
  */
+NS_SWIFT_SENDABLE
+MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1))
 @interface MTREventPath : MTRClusterPath
+
 @property (nonatomic, readonly, copy) NSNumber * event;
 
 + (MTREventPath *)eventPathWithEndpointID:(NSNumber *)endpointID
                                 clusterID:(NSNumber *)clusterID
-                                  eventID:(NSNumber *)eventID API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+                                  eventID:(NSNumber *)eventID MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 @end
 
 /**
  * A path indicating a specific command on a device (i.e. without any
  * wildcards).
  */
+NS_SWIFT_SENDABLE
+MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1))
 @interface MTRCommandPath : MTRClusterPath
+
 @property (nonatomic, readonly, copy) NSNumber * command;
 
 + (MTRCommandPath *)commandPathWithEndpointID:(NSNumber *)endpointID
                                     clusterID:(NSNumber *)clusterID
-                                    commandID:(NSNumber *)commandID API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
+                                    commandID:(NSNumber *)commandID MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4));
 @end
 
+NS_SWIFT_SENDABLE
+MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1))
 @interface MTRAttributeReport : NSObject
+
 @property (nonatomic, readonly, copy) MTRAttributePath * path;
-// value is nullable because nullable attributes can have nil as value.
+
+/**
+ * value will be nil in the following cases:
+ *
+ * * There was an error.  In this case, "error" will not be nil.
+ * * The attribute is nullable and the value of the attribute is null.
+ *
+ * If value is not nil, the actual type of value will depend on the
+ * schema-defined (typically defined in the Matter specification) type of the
+ * attribute as follows:
+ *
+ * * list: NSArray of whatever type the list entries are.
+ * * struct: The corresponding structure interface defined by Matter.framework
+ * * octet string: NSData
+ * * string: NSString
+ * * discrete/analog types: NSNumber
+ *
+ * Derived types (in the Matter specification sense) are represented the same as
+ * the base type, except for "string" (which is a derived type of "octet string"
+ * in the specification).
+ */
 @property (nonatomic, readonly, copy, nullable) id value;
-// If this specific path resulted in an error, the error (in the
-// MTRInteractionErrorDomain or MTRErrorDomain) that corresponds to this
-// path.
+
+/**
+ * If this specific path resulted in an error, the error (in the
+ * MTRInteractionErrorDomain or MTRErrorDomain) that corresponds to this
+ * path.
+ */
 @property (nonatomic, readonly, copy, nullable) NSError * error;
+
+/**
+ * Initialize an MTRAttributeReport with a response-value dictionary of the sort
+ * that MTRDeviceResponseHandler would receive.
+ *
+ * Will return nil and hand out an error if the response-value dictionary is not
+ * an attribute response.
+ *
+ * Will set the value property to nil and the error property to non-nil, even if
+ * the schema for the value is not known, if the response-value is an error, not
+ * data.
+ *
+ * Will return nil and hand out an error if the response-value is data in the
+ * following cases:
+ *
+ * * The response is for a cluster/attribute combination for which the schema is
+ *   unknown and hence the type of the data is not known.
+ * * The data does not match the known schema.
+ */
+- (nullable instancetype)initWithResponseValue:(NSDictionary<NSString *, id> *)responseValue
+                                         error:(NSError * __autoreleasing *)error
+    MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+
 @end
 
 typedef NS_ENUM(NSUInteger, MTREventTimeType) {
     MTREventTimeTypeSystemUpTime = 0,
     MTREventTimeTypeTimestampDate
-} API_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+} MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
 
 typedef NS_ENUM(NSUInteger, MTREventPriority) {
     MTREventPriorityDebug = 0,
     MTREventPriorityInfo = 1,
     MTREventPriorityCritical = 2
-} API_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+} MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
 
+NS_SWIFT_SENDABLE
+MTR_AVAILABLE(ios(16.1), macos(13.0), watchos(9.1), tvos(16.1))
 @interface MTREventReport : NSObject
+
 @property (nonatomic, readonly, copy) MTREventPath * path;
+
+/**
+ * eventNumber will only have a useful value if "error" is nil.
+ */
 @property (nonatomic, readonly, copy) NSNumber * eventNumber; // EventNumber type (uint64_t)
+
+/**
+ * priority will only have a useful value if "error" is nil.
+ */
 @property (nonatomic, readonly, copy) NSNumber * priority; // PriorityLevel type (MTREventPriority)
 
-// Either systemUpTime or timestampDate will be valid depending on eventTimeType
-@property (nonatomic, readonly) MTREventTimeType eventTimeType API_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
-@property (nonatomic, readonly) NSTimeInterval systemUpTime API_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+/**
+ * Either systemUpTime or timestampDate will be valid depending on
+ * eventTimeType, if "error" is nil.  If "error" is not nil, none of
+ * eventTimeType, systemUpTime, timestampDate should be expected to have useful
+ * values.
+ */
+@property (nonatomic, readonly) MTREventTimeType eventTimeType MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+@property (nonatomic, readonly) NSTimeInterval systemUpTime MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
 @property (nonatomic, readonly, copy, nullable)
-    NSDate * timestampDate API_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
+    NSDate * timestampDate MTR_AVAILABLE(ios(16.5), macos(13.4), watchos(9.5), tvos(16.5));
 
-// An instance of one of the event payload interfaces.
-@property (nonatomic, readonly, copy) id value;
+/**
+ * An instance of the event payload interface that corresponds to the report's
+ * path (e.g. MTRBasicInformationClusterStartUpEvent if the path's cluster
+ * 0x0028 "Basic Information" and the path's event is 0x00 "StartUp"), or nil if
+ * error is not nil (in which case there is no payload available).
+ */
+@property (nonatomic, readonly, copy, nullable) id value;
 
-// If this specific path resulted in an error, the error (in the
-// MTRInteractionErrorDomain or MTRErrorDomain) that corresponds to this
-// path.
+/**
+ * If this specific path resulted in an error, the error (in the
+ * MTRInteractionErrorDomain or MTRErrorDomain) that corresponds to this
+ * path.
+ */
 @property (nonatomic, readonly, copy, nullable) NSError * error;
+
+/**
+ * Initialize an MTREventReport with a response-value dictionary of the sort
+ * that MTRDeviceResponseHandler would receive.
+ *
+ * Will return nil and hand out an error if the response-value dictionary is not
+ * an event response.
+ *
+ * Will set the value property to nil and the error property to non-nil, even if
+ * the schema for the value is not known, if the response-value is an error, not
+ * data.
+ *
+ * Will return nil and hand out an error if the response-value is data in the
+ * following cases:
+ *
+ * * The response is for a cluster/event combination for which the schema is
+ *   unknown and hence the type of the data is not known.
+ * * The data does not match the known schema.
+ */
+- (nullable instancetype)initWithResponseValue:(NSDictionary<NSString *, id> *)responseValue
+                                         error:(NSError * __autoreleasing *)error
+    MTR_AVAILABLE(ios(17.0), macos(14.0), watchos(10.0), tvos(17.0));
+
 @end
 
 @interface MTRBaseDevice (Deprecated)

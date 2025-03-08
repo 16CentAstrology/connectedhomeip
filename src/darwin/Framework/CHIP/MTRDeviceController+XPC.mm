@@ -34,7 +34,13 @@ static NSString * const kMaxIntervalKey = @"maxInterval";
 static NSSet * GetXPCAllowedClasses()
 {
     static NSSet * const sXPCAllowedClasses = [NSSet setWithArray:@[
-        [NSString class], [NSNumber class], [NSData class], [NSArray class], [NSDictionary class], [NSError class]
+        [NSString class],
+        [NSNumber class],
+        [NSData class],
+        [NSArray class],
+        [NSDictionary class],
+        [NSError class],
+        [NSDate class],
     ]];
     return sXPCAllowedClasses;
 }
@@ -208,18 +214,20 @@ static void decodeReadParams(NSDictionary<NSString *, id> * inParams, MTRReadPar
                argumentIndex:0
                      ofReply:YES];
     [xpcInterface setClasses:GetXPCAllowedClasses()
-                 forSelector:@selector
-                 (writeAttributeWithController:nodeId:endpointId:clusterId:attributeId:value:timedWriteTimeout:completion:)
+                 forSelector:@selector(writeAttributeWithController:nodeId:endpointId:clusterId:attributeId:value:timedWriteTimeout:completion:)
                argumentIndex:0
                      ofReply:YES];
     [xpcInterface setClasses:GetXPCAllowedClasses()
-                 forSelector:@selector
-                 (invokeCommandWithController:nodeId:endpointId:clusterId:commandId:fields:timedInvokeTimeout:completion:)
+                 forSelector:@selector(invokeCommandWithController:nodeId:endpointId:clusterId:commandId:fields:timedInvokeTimeout:completion:)
                argumentIndex:0
                      ofReply:YES];
 
     [xpcInterface setClasses:GetXPCAllowedClasses()
                  forSelector:@selector(readAttributeCacheWithController:nodeId:endpointId:clusterId:attributeId:completion:)
+               argumentIndex:0
+                     ofReply:YES];
+    [xpcInterface setClasses:GetXPCAllowedClasses()
+                 forSelector:@selector(downloadLogWithController:nodeId:type:timeout:completion:)
                argumentIndex:0
                      ofReply:YES];
     return xpcInterface;

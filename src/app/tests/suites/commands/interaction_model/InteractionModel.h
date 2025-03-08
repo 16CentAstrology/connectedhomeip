@@ -28,7 +28,7 @@
 #include <lib/support/CodeUtils.h>
 #include <lib/support/UnitTestUtils.h>
 
-constexpr uint8_t kMaxAllowedPaths = 10;
+inline constexpr uint8_t kMaxAllowedPaths = 64;
 
 namespace chip {
 namespace test_utils {
@@ -90,11 +90,18 @@ protected:
                            std::vector<chip::ClusterId> clusterIds, std::vector<chip::EventId> eventIds,
                            chip::app::ReadClient::InteractionType interactionType);
 
+    CHIP_ERROR ReadNone(chip::DeviceProxy * device) { return ReportNone(device, chip::app::ReadClient::InteractionType::Read); }
+
     CHIP_ERROR ReadAll(chip::DeviceProxy * device, std::vector<chip::EndpointId> endpointIds,
                        std::vector<chip::ClusterId> clusterIds, std::vector<chip::AttributeId> attributeIds,
                        std::vector<chip::EventId> eventIds)
     {
         return ReportAll(device, endpointIds, clusterIds, attributeIds, eventIds, chip::app::ReadClient::InteractionType::Read);
+    }
+
+    CHIP_ERROR SubscribeNone(chip::DeviceProxy * device)
+    {
+        return ReportNone(device, chip::app::ReadClient::InteractionType::Subscribe);
     }
 
     CHIP_ERROR SubscribeAll(chip::DeviceProxy * device, std::vector<chip::EndpointId> endpointIds,
@@ -104,6 +111,8 @@ protected:
         return ReportAll(device, endpointIds, clusterIds, attributeIds, eventIds,
                          chip::app::ReadClient::InteractionType::Subscribe);
     }
+
+    CHIP_ERROR ReportNone(chip::DeviceProxy * device, chip::app::ReadClient::InteractionType interactionType);
 
     CHIP_ERROR ReportAll(chip::DeviceProxy * device, std::vector<chip::EndpointId> endpointIds,
                          std::vector<chip::ClusterId> clusterIds, std::vector<chip::AttributeId> attributeIds,
@@ -196,6 +205,12 @@ protected:
         return *this;
     }
 
+    InteractionModelReports & SetPeerLIT(bool isPeerLIT)
+    {
+        mIsPeerLIT = isPeerLIT;
+        return *this;
+    }
+
     void ResetOptions()
     {
         mDataVersions      = chip::NullOptional;
@@ -204,6 +219,7 @@ protected:
         mFabricFiltered    = chip::Optional<bool>(true);
         mKeepSubscriptions = chip::NullOptional;
         mAutoResubscribe   = chip::NullOptional;
+        mIsPeerLIT         = false;
         mMinInterval       = 0;
         mMaxInterval       = 0;
     }
@@ -214,6 +230,7 @@ protected:
     chip::Optional<bool> mFabricFiltered;
     chip::Optional<bool> mKeepSubscriptions;
     chip::Optional<bool> mAutoResubscribe;
+    bool mIsPeerLIT;
     uint16_t mMinInterval;
     uint16_t mMaxInterval;
 };
@@ -234,12 +251,15 @@ protected:
 
             chip::app::CommandPathParams commandPath = { endpointId, clusterId, commandId,
                                                          (chip::app::CommandPathFlags::kEndpointIdValid) };
-            auto commandSender = std::make_unique<chip::app::CommandSender>(mCallback, device->GetExchangeManager(),
-                                                                            mTimedInteractionTimeoutMs.HasValue());
+            auto commandSender                       = std::make_unique<chip::app::CommandSender>(
+                mCallback, device->GetExchangeManager(), mTimedInteractionTimeoutMs.HasValue(), mSuppressResponse.ValueOr(false),
+                device->GetSecureSession().Value()->AllowsLargePayload());
+
             VerifyOrReturnError(commandSender != nullptr, CHIP_ERROR_NO_MEMORY);
 
-            ReturnErrorOnFailure(commandSender->AddRequestDataNoTimedCheck(commandPath, value, mTimedInteractionTimeoutMs,
-                                                                           mSuppressResponse.ValueOr(false)));
+            chip::app::CommandSender::AddRequestDataParameters addRequestDataParams(mTimedInteractionTimeoutMs);
+            // Using TestOnly AddRequestData to allow for an intentionally malformed request for server validation testing.
+            ReturnErrorOnFailure(commandSender->TestOnlyAddRequestDataNoTimedCheck(commandPath, value, addRequestDataParams));
             ReturnErrorOnFailure(commandSender->SendCommandRequest(device->GetSecureSession().Value()));
             mCommandSender.push_back(std::move(commandSender));
 
@@ -266,7 +286,9 @@ protected:
         VerifyOrReturnError(exchangeManager != nullptr, CHIP_ERROR_INCORRECT_STATE);
 
         chip::app::CommandSender commandSender(mCallback, exchangeManager);
-        ReturnErrorOnFailure(commandSender.AddRequestDataNoTimedCheck(commandPath, value, chip::NullOptional));
+        chip::app::CommandSender::AddRequestDataParameters addRequestDataParams;
+        // Using TestOnly AddRequestData to allow for an intentionally malformed request for server validation testing.
+        ReturnErrorOnFailure(commandSender.TestOnlyAddRequestDataNoTimedCheck(commandPath, value, addRequestDataParams));
 
         chip::Transport::OutgoingGroupSession session(groupId, fabricIndex);
         return commandSender.SendGroupCommandRequest(chip::SessionHandle(session));
@@ -385,7 +407,7 @@ protected:
                                                                     mTimedInteractionTimeoutMs, mSuppressResponse.ValueOr(false));
             VerifyOrReturnError(mWriteClient != nullptr, CHIP_ERROR_NO_MEMORY);
 
-            for (uint8_t i = 0; i < pathsConfig.count; i++)
+            for (size_t i = 0; i < pathsConfig.count; i++)
             {
                 auto & path        = pathsConfig.attributePathParams[i];
                 auto & dataVersion = pathsConfig.dataVersionFilter[i].mDataVersion;

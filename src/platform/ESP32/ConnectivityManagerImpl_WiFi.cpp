@@ -26,6 +26,7 @@
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/DeviceInstanceInfoProvider.h>
 #include <platform/DiagnosticDataProvider.h>
+#include <platform/ESP32/ESP32EndpointQueueFilter.h>
 #include <platform/ESP32/ESP32Utils.h>
 #include <platform/ESP32/NetworkCommissioningDriver.h>
 #include <platform/ESP32/route_hook/ESP32RouteHook.h>
@@ -45,7 +46,6 @@
 using namespace ::chip;
 using namespace ::chip::Inet;
 using namespace ::chip::System;
-using namespace ::chip::TLV;
 using chip::DeviceLayer::Internal::ESP32Utils;
 
 namespace chip {
@@ -105,6 +105,12 @@ void ConnectivityManagerImpl::_ClearWiFiStationProvision(void)
 {
     if (mWiFiStationMode != kWiFiStationMode_ApplicationControlled)
     {
+        CHIP_ERROR error = chip::DeviceLayer::Internal::ESP32Utils::ClearWiFiStationProvision();
+        if (error != CHIP_NO_ERROR)
+        {
+            ChipLogError(DeviceLayer, "ClearWiFiStationProvision failed: %s", chip::ErrorStr(error));
+            return;
+        }
         DeviceLayer::SystemLayer().ScheduleWork(DriveStationState, NULL);
 #if CHIP_DEVICE_CONFIG_ENABLE_WIFI_AP
         DeviceLayer::SystemLayer().ScheduleWork(DriveAPState, NULL);
@@ -520,7 +526,8 @@ void ConnectivityManagerImpl::OnWiFiPlatformEvent(const ChipDeviceEvent * event)
                 break;
             case IP_EVENT_GOT_IP6:
                 ChipLogProgress(DeviceLayer, "IP_EVENT_GOT_IP6");
-                if (strcmp(esp_netif_get_ifkey(event->Platform.ESPSystemEvent.Data.IpGotIp6.esp_netif), "WIFI_STA_DEF") == 0)
+                if (strcmp(esp_netif_get_ifkey(event->Platform.ESPSystemEvent.Data.IpGotIp6.esp_netif),
+                           ESP32Utils::kDefaultWiFiStationNetifKey) == 0)
                 {
                     OnStationIPv6AddressAvailable(event->Platform.ESPSystemEvent.Data.IpGotIp6);
                 }
@@ -664,10 +671,11 @@ void ConnectivityManagerImpl::DriveStationState()
 void ConnectivityManagerImpl::OnStationConnected()
 {
     // Assign an IPv6 link local address to the station interface.
-    esp_err_t err = esp_netif_create_ip6_linklocal(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"));
+    esp_err_t err = esp_netif_create_ip6_linklocal(esp_netif_get_handle_from_ifkey(ESP32Utils::kDefaultWiFiStationNetifKey));
     if (err != ESP_OK)
     {
-        ChipLogError(DeviceLayer, "esp_netif_create_ip6_linklocal() failed for WIFI_STA_DEF interface: %s", esp_err_to_name(err));
+        ChipLogError(DeviceLayer, "esp_netif_create_ip6_linklocal() failed for %s interface, err:%s",
+                     ESP32Utils::kDefaultWiFiStationNetifKey, esp_err_to_name(err));
     }
     NetworkCommissioning::ESPWiFiDriver::GetInstance().OnConnectWiFiNetwork();
     // TODO Invoke WARM to perform actions that occur when the WiFi station interface comes up.
@@ -772,7 +780,7 @@ void ConnectivityManagerImpl::ChangeWiFiStationState(WiFiStationState newState)
         ChipLogProgress(DeviceLayer, "WiFi station state change: %s -> %s", WiFiStationStateToStr(mWiFiStationState),
                         WiFiStationStateToStr(newState));
         mWiFiStationState = newState;
-        SystemLayer().ScheduleLambda([]() { NetworkCommissioning::ESPWiFiDriver::GetInstance().OnNetworkStatusChange(); });
+        NetworkCommissioning::ESPWiFiDriver::GetInstance().OnNetworkStatusChange();
     }
 }
 
@@ -901,14 +909,14 @@ void ConnectivityManagerImpl::DriveAPState()
 
     // If AP is active, but the interface doesn't have an IPv6 link-local
     // address, assign one now.
-    if (mWiFiAPState == kWiFiAPState_Active && Internal::ESP32Utils::IsInterfaceUp("WIFI_AP_DEF") &&
-        !Internal::ESP32Utils::HasIPv6LinkLocalAddress("WIFI_AP_DEF"))
+    if (mWiFiAPState == kWiFiAPState_Active && ESP32Utils::IsInterfaceUp(ESP32Utils::kDefaultWiFiAPNetifKey) &&
+        !ESP32Utils::HasIPv6LinkLocalAddress(ESP32Utils::kDefaultWiFiAPNetifKey))
     {
-        esp_err_t error = esp_netif_create_ip6_linklocal(esp_netif_get_handle_from_ifkey("WIFI_AP_DEF"));
+        esp_err_t error = esp_netif_create_ip6_linklocal(esp_netif_get_handle_from_ifkey(ESP32Utils::kDefaultWiFiAPNetifKey));
         if (error != ESP_OK)
         {
-            ChipLogError(DeviceLayer, "esp_netif_create_ip6_linklocal() failed for WIFI_AP_DEF interface: %s",
-                         esp_err_to_name(error));
+            ChipLogError(DeviceLayer, "esp_netif_create_ip6_linklocal() failed for %s interface, err:%s",
+                         ESP32Utils::kDefaultWiFiAPNetifKey, esp_err_to_name(error));
             goto exit;
         }
     }
@@ -991,12 +999,14 @@ void ConnectivityManagerImpl::UpdateInternetConnectivityState(void)
                 // If the station interface has been assigned an IPv4 address, and has
                 // an IPv4 gateway, then presume that the device has IPv4 Internet
                 // connectivity.
+#if CHIP_DEVICE_CONFIG_ENABLE_IPV4
                 if (!ip4_addr_isany_val(*netif_ip4_addr(netif)) && !ip4_addr_isany_val(*netif_ip4_gw(netif)))
                 {
                     haveIPv4Conn = true;
 
                     esp_netif_ip_info_t ipInfo;
-                    if (esp_netif_get_ip_info(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"), &ipInfo) == ESP_OK)
+                    if (esp_netif_get_ip_info(esp_netif_get_handle_from_ifkey(ESP32Utils::kDefaultWiFiStationNetifKey), &ipInfo) ==
+                        ESP_OK)
                     {
                         char addrStr[INET_ADDRSTRLEN];
                         // ToDo: change the code to using IPv6 address
@@ -1004,6 +1014,7 @@ void ConnectivityManagerImpl::UpdateInternetConnectivityState(void)
                         IPAddress::FromString(addrStr, addr);
                     }
                 }
+#endif
 
                 // Search among the IPv6 addresses assigned to the interface for a Global Unicast
                 // address (2000::/3) that is in the valid state.  If such an address is found...
@@ -1099,8 +1110,48 @@ void ConnectivityManagerImpl::OnStationIPv6AddressAvailable(const ip_event_got_i
     event.InterfaceIpAddressChanged.Type = InterfaceIpChangeType::kIpV6_Assigned;
     PlatformMgr().PostEventOrDie(&event);
 
-    esp_route_hook_init(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"));
+#ifdef CONFIG_ENABLE_ENDPOINT_QUEUE_FILTER
+    uint8_t station_mac[6];
+    if (esp_wifi_get_mac(WIFI_IF_STA, station_mac) == ESP_OK)
+    {
+        static chip::Inet::ESP32EndpointQueueFilter sEndpointQueueFilter;
+        char station_mac_str[12];
+        for (size_t i = 0; i < 6; ++i)
+        {
+            uint8_t dig1               = (station_mac[i] & 0xF0) >> 4;
+            uint8_t dig2               = station_mac[i] & 0x0F;
+            station_mac_str[2 * i]     = static_cast<char>(dig1 > 9 ? ('A' + dig1 - 0xA) : ('0' + dig1));
+            station_mac_str[2 * i + 1] = static_cast<char>(dig2 > 9 ? ('A' + dig2 - 0xA) : ('0' + dig2));
+        }
+        if (sEndpointQueueFilter.SetMdnsHostName(chip::CharSpan(station_mac_str)) == CHIP_NO_ERROR)
+        {
+            chip::Inet::UDPEndPointImpl::SetQueueFilter(&sEndpointQueueFilter);
+        }
+        else
+        {
+            ChipLogError(DeviceLayer, "Failed to set mDNS hostname for endpoint queue filter");
+        }
+    }
+    else
+    {
+        ChipLogError(DeviceLayer, "Failed to get the MAC address of station netif");
+    }
+#endif // CONFIG_ENABLE_ENDPOINT_QUEUE_FILTER
+
+#ifdef CONFIG_ENABLE_ROUTE_HOOK
+    esp_route_hook_init(esp_netif_get_handle_from_ifkey(ESP32Utils::kDefaultWiFiStationNetifKey));
+#endif
 }
+
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+
+CHIP_ERROR ConnectivityManagerImpl::_SetPollingInterval(System::Clock::Milliseconds32 pollingInterval)
+{
+    (void) pollingInterval;
+    // For ESP32 platform, the listen interval of the legacy power-saving mode can only be configured before connecting to AP.
+    return CHIP_ERROR_NOT_IMPLEMENTED;
+}
+#endif // CHIP_CONFIG_ENABLE_ICD_SERVER
 
 } // namespace DeviceLayer
 } // namespace chip

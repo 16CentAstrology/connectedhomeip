@@ -65,7 +65,6 @@
 #endif
 
 using namespace ::chip;
-using namespace ::chip::TLV;
 using namespace ::chip::DeviceLayer;
 using namespace ::chip::DeviceLayer::Internal;
 using namespace ::chip::app::Clusters::GeneralDiagnostics;
@@ -94,7 +93,7 @@ CHIP_ERROR ConnectivityManagerImpl::_Init()
     mpConnectCallback = nullptr;
     mpScanCallback    = nullptr;
 
-    if (ConnectivityUtils::GetEthInterfaceName(mEthIfName, IFNAMSIZ) == CHIP_NO_ERROR)
+    if (ConnectivityUtils::GetEthInterfaceName(mEthIfName, Inet::InterfaceId::kMaxIfNameLength) == CHIP_NO_ERROR)
     {
         ChipLogProgress(DeviceLayer, "Got Ethernet interface: %s", mEthIfName);
     }
@@ -115,7 +114,7 @@ CHIP_ERROR ConnectivityManagerImpl::_Init()
 #endif
 
 #if CHIP_DEVICE_CONFIG_ENABLE_WIFI
-    if (ConnectivityUtils::GetWiFiInterfaceName(sWiFiIfName, IFNAMSIZ) == CHIP_NO_ERROR)
+    if (ConnectivityUtils::GetWiFiInterfaceName(sWiFiIfName, Inet::InterfaceId::kMaxIfNameLength) == CHIP_NO_ERROR)
     {
         ChipLogProgress(DeviceLayer, "Got WiFi interface: %s", sWiFiIfName);
     }
@@ -1049,7 +1048,7 @@ void ConnectivityManagerImpl::PostNetworkConnect()
     // This should be removed or find a better place once we depercate the rendezvous session.
     for (chip::Inet::InterfaceAddressIterator it; it.HasCurrent(); it.Next())
     {
-        char ifName[chip::Inet::InterfaceId::kMaxIfNameLength];
+        char ifName[Inet::InterfaceId::kMaxIfNameLength];
         if (it.IsUp() && CHIP_NO_ERROR == it.GetInterfaceName(ifName, sizeof(ifName)) &&
             strncmp(ifName, sWiFiIfName, sizeof(ifName)) == 0)
         {
@@ -1113,8 +1112,12 @@ CHIP_ERROR ConnectivityManagerImpl::CommitConfig()
     return CHIP_NO_ERROR;
 }
 
-CHIP_ERROR ConnectivityManagerImpl::GetWiFiBssId(ByteSpan & value)
+CHIP_ERROR ConnectivityManagerImpl::GetWiFiBssId(MutableByteSpan & value)
 {
+    constexpr size_t bssIdSize = 6;
+    static_assert(kMaxHardwareAddrSize >= bssIdSize, "We are assuming we can fit a BSSID in a buffer of size kMaxHardwareAddrSize");
+    VerifyOrReturnError(value.size() >= bssIdSize, CHIP_ERROR_BUFFER_TOO_SMALL);
+
     CHIP_ERROR err          = CHIP_ERROR_READ_FAILED;
     struct ifaddrs * ifaddr = nullptr;
 
@@ -1126,23 +1129,21 @@ CHIP_ERROR ConnectivityManagerImpl::GetWiFiBssId(ByteSpan & value)
     }
     else
     {
-        uint8_t macAddress[kMaxHardwareAddrSize];
-
         // Walk through linked list, maintaining head pointer so we can free list later.
         for (struct ifaddrs * ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
         {
-            if (ConnectivityUtils::GetInterfaceConnectionType(ifa->ifa_name) ==
-                InterfaceTypeEnum::EMBER_ZCL_INTERFACE_TYPE_ENUM_WI_FI)
+            if (ConnectivityUtils::GetInterfaceConnectionType(ifa->ifa_name) == InterfaceTypeEnum::kWiFi)
             {
-                if (ConnectivityUtils::GetInterfaceHardwareAddrs(ifa->ifa_name, macAddress, kMaxHardwareAddrSize) != CHIP_NO_ERROR)
+                if (ConnectivityUtils::GetInterfaceHardwareAddrs(ifa->ifa_name, value.data(), kMaxHardwareAddrSize) !=
+                    CHIP_NO_ERROR)
                 {
                     ChipLogError(DeviceLayer, "Failed to get WiFi network hardware address");
                 }
                 else
                 {
                     // Set 48-bit IEEE MAC Address
-                    value = ByteSpan(macAddress, 6);
-                    err   = CHIP_NO_ERROR;
+                    value.reduce_size(bssIdSize);
+                    err = CHIP_NO_ERROR;
                     break;
                 }
             }
@@ -1321,10 +1322,30 @@ CHIP_ERROR ConnectivityManagerImpl::StartWiFiScan(ByteSpan ssid, WiFiDriver::Sca
 namespace {
 // wpa_supplicant's scan results don't contains the channel infomation, so we need this lookup table for resolving the band and
 // channel infomation.
-std::pair<WiFiBand, uint16_t> GetBandAndChannelFromFrequency(uint32_t freq)
+std::pair<WiFiBandEnum, uint16_t> GetBandAndChannelFromFrequency(uint32_t freq)
 {
-    std::pair<WiFiBand, uint16_t> ret = std::make_pair(WiFiBand::k2g4, 0);
-    if (freq <= 2472)
+    std::pair<WiFiBandEnum, uint16_t> ret = std::make_pair(WiFiBand::k2g4, 0);
+    if (freq <= 931)
+    {
+        ret.first = WiFiBand::k1g;
+        if (freq >= 916)
+        {
+            ret.second = ((freq - 916) * 2) - 1;
+        }
+        else if (freq >= 902)
+        {
+            ret.second = (freq - 902) * 2;
+        }
+        else if (freq >= 863)
+        {
+            ret.second = (freq - 863) * 2;
+        }
+        else
+        {
+            ret.second = 1;
+        }
+    }
+    else if (freq <= 2472)
     {
         ret.second = static_cast<uint16_t>((freq - 2412) / 5 + 1);
     }

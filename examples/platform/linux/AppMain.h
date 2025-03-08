@@ -19,16 +19,21 @@
 #pragma once
 
 #include <app/server/Server.h>
-#include <controller/CHIPDeviceController.h>
 #include <controller/CommissionerDiscoveryController.h>
+#include <crypto/RawKeySessionKeystore.h>
 #include <lib/core/CHIPError.h>
+#include <lib/core/DataModelTypes.h>
+#include <lib/core/Optional.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/PlatformManager.h>
 #include <transport/TransportMgr.h>
 
 #include "Options.h"
 
-int ChipLinuxAppInit(int argc, char * const argv[], chip::ArgParser::OptionSet * customOptions = nullptr);
+// Applications can optionally provide the endpoint id of a secondary network
+// commissioning endpoint, if one is supported.
+int ChipLinuxAppInit(int argc, char * const argv[], chip::ArgParser::OptionSet * customOptions = nullptr,
+                     const chip::Optional<chip::EndpointId> secondaryNetworkCommissioningEndpoit = chip::NullOptional);
 
 /**
  * A main loop implementation describes how an application main loop is to be
@@ -83,18 +88,8 @@ public:
  */
 void ChipLinuxAppMainLoop(AppMainLoopImplementation * impl = nullptr);
 
-#if CHIP_DEVICE_CONFIG_ENABLE_BOTH_COMMISSIONER_AND_COMMISSIONEE
-
-using chip::Controller::DeviceCommissioner;
-using chip::Transport::PeerAddress;
-
-CHIP_ERROR CommissionerPairOnNetwork(uint32_t pincode, uint16_t disc, PeerAddress address);
-CHIP_ERROR CommissionerPairUDC(uint32_t pincode, size_t index);
-
-DeviceCommissioner * GetDeviceCommissioner();
-CommissionerDiscoveryController * GetCommissionerDiscoveryController();
-
-#endif // CHIP_DEVICE_CONFIG_ENABLE_BOTH_COMMISSIONER_AND_COMMISSIONEE
-
 // For extra init calls, the function will be called right before running Matter main loop.
 void ApplicationInit();
+
+// For extra shutdown calls, the function will be called before any of the core Matter objects are shut down.
+void ApplicationShutdown();
