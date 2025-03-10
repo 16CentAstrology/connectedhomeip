@@ -26,7 +26,14 @@
 #include <platform/CHIPDeviceConfig.h>
 #include <platform/internal/GenericPlatformManagerImpl.h>
 
+#if CHIP_SYSTEM_CONFIG_USE_POSIX_SOCKETS
 #include <sys/select.h>
+#endif
+
+#if CHIP_SYSTEM_CONFIG_USE_ZEPHYR_SOCKETS
+#include <inet/ZephyrSocket.h> // nogncheck
+#endif
+
 #include <zephyr/kernel.h>
 
 namespace chip {

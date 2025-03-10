@@ -13,16 +13,20 @@
 # limitations under the License.
 
 import logging
+from typing import Any, Optional
 
-from matter_idl.matter_idl_types import (Attribute, Bitmap, Cluster, ClusterSide, Command, CommandQuality, ConstantEntry, DataType,
-                                         Enum, Event, EventPriority, EventQuality, Field, FieldQuality, Idl, Struct, StructQuality,
-                                         StructTag)
+from matter_idl.matter_idl_types import (Attribute, Bitmap, Cluster, Command, CommandQuality, ConstantEntry, DataType, Enum, Event,
+                                         EventPriority, EventQuality, Field, FieldQuality, Idl, Struct, StructQuality, StructTag)
 
 from .base import BaseHandler, HandledDepth
 from .context import Context, IdlPostProcessor
 from .parsing import AttrsToAccessPrivilege, AttrsToAttribute, ParseInt
 
 LOGGER = logging.getLogger('matter-xml-parser')
+
+
+def _IsConformanceTagName(name: str) -> bool:
+    return name in {'mandatoryConform', 'optionalConform', 'otherwiseConform', 'provisionalConform', 'deprecateConform'}
 
 
 class ClusterNameHandler(BaseHandler):
@@ -109,6 +113,9 @@ class EventHandler(BaseHandler):
             self._event.readacl = AttrsToAccessPrivilege(attrs)
             return BaseHandler(self.context, handled=HandledDepth.SINGLE_TAG)
         elif name.lower() == 'description':
+            return DescriptionHandler(self.context, self._event)
+        elif _IsConformanceTagName(name):
+            # we do not parse conformance at this point
             return BaseHandler(self.context, handled=HandledDepth.ENTIRE_TREE)
         else:
             return BaseHandler(self.context)
@@ -145,6 +152,9 @@ class AttributeHandler(BaseHandler):
             return BaseHandler(self.context, handled=HandledDepth.SINGLE_TAG)
         elif name.lower() == 'description':
             return AttributeDescriptionHandler(self.context, self._attribute)
+        elif _IsConformanceTagName(name):
+            # we do not parse conformance at this point
+            return BaseHandler(self.context, handled=HandledDepth.ENTIRE_TREE)
         else:
             return BaseHandler(self.context)
 
@@ -160,6 +170,18 @@ class AttributeHandler(BaseHandler):
             raise Exception("Name for attribute was not parsed.")
 
         self._cluster.attributes.append(self._attribute)
+
+
+class SkipProvisioalHandler(BaseHandler):
+    def __init__(self, context: Context, attrs):
+        super().__init__(context, handled=HandledDepth.SINGLE_TAG)
+
+    def GetNextProcessor(self, name: str, attrs):
+        if _IsConformanceTagName(name):
+            # we do not parse conformance at this point
+            return BaseHandler(self.context, handled=HandledDepth.ENTIRE_TREE)
+        else:
+            return BaseHandler(self.context)
 
 
 class StructHandler(BaseHandler, IdlPostProcessor):
@@ -213,7 +235,7 @@ class StructHandler(BaseHandler, IdlPostProcessor):
                 field.qualities |= FieldQuality.FABRIC_SENSITIVE
 
             self._struct.fields.append(field)
-            return BaseHandler(self.context, handled=HandledDepth.SINGLE_TAG)
+            return SkipProvisioalHandler(self.context, attrs)
         elif name.lower() == 'cluster':
             self._cluster_codes.add(ParseInt(attrs['code']))
             return BaseHandler(self.context, handled=HandledDepth.SINGLE_TAG)
@@ -224,19 +246,20 @@ class StructHandler(BaseHandler, IdlPostProcessor):
         # We have two choices of adding a struct:
         #   - inside a cluster if a code exists
         #   - inside top level if no codes were associated
-        if self._cluster_codes:
-            for code in self._cluster_codes:
-                found = False
-                for c in idl.clusters:
-                    if c.code == code:
-                        c.structs.append(self._struct)
-                        found = True
+        if not self._cluster_codes:
+            idl.global_structs.append(self._struct)
+            return
 
-                if not found:
-                    LOGGER.error('Enum %s could not find cluster (code %d/0x%X)' %
-                                 (self._struct.name, code, code))
-        else:
-            idl.structs.append(self._struct)
+        for code in self._cluster_codes:
+            found = False
+            for c in idl.clusters:
+                if c.code == code:
+                    c.structs.append(self._struct)
+                    found = True
+
+            if not found:
+                LOGGER.error('Struct %s could not find cluster (code %d/0x%X)' %
+                             (self._struct.name, code, code))
 
     def EndProcessing(self):
         self.context.AddIdlPostProcessor(self)
@@ -247,7 +270,10 @@ class EnumHandler(BaseHandler, IdlPostProcessor):
 
     def __init__(self, context: Context, attrs):
         super().__init__(context)
-        self._cluster_code = None  # if set, enum belongs to a specific cluster
+
+        # no cluster codes means global. Note that at the time
+        # of writing this, no global enums were defined in XMLs
+        self._cluster_codes = set()
         self._enum = Enum(name=attrs['name'],
                           base_type=attrs['type'], entries=[])
 
@@ -259,31 +285,25 @@ class EnumHandler(BaseHandler, IdlPostProcessor):
             ))
             return BaseHandler(self.context, handled=HandledDepth.SINGLE_TAG)
         elif name.lower() == 'cluster':
-            if self._cluster_code is not None:
-                raise Exception(
-                    'Multiple cluster codes for enum %s' % self._enum.name)
-            self._cluster_code = ParseInt(attrs['code'])
+            self._cluster_codes.add(ParseInt(attrs['code']))
             return BaseHandler(self.context, handled=HandledDepth.SINGLE_TAG)
         else:
             return BaseHandler(self.context)
 
     def FinalizeProcessing(self, idl: Idl):
-        # We have two choices of adding an enum:
-        #   - inside a cluster if a code exists
-        #   - inside top level if a code does not exist
+        if not self._cluster_codes:
+            idl.global_enums.append(self._enum)
+            return
 
-        if self._cluster_code is None:
-            idl.enums.append(self._enum)
-        else:
-            found = False
-            for c in idl.clusters:
-                if c.code == self._cluster_code:
-                    c.enums.append(self._enum)
-                    found = True
+        found = set()
+        for c in idl.clusters:
+            if c.code in self._cluster_codes:
+                c.enums.append(self._enum)
+                found.add(c.code)
 
-            if not found:
-                LOGGER.error('Enum %s could not find its cluster (code %d/0x%X)' %
-                             (self._enum.name, self._cluster_code, self._cluster_code))
+        if found != self._cluster_codes:
+            LOGGER.error('Enum %s could not find its clusters (codes: %r)' %
+                         (self._enum.name, self._cluster_codes - found))
 
     def EndProcessing(self):
         self.context.AddIdlPostProcessor(self)
@@ -315,14 +335,11 @@ class BitmapHandler(BaseHandler):
             return BaseHandler(self.context)
 
     def FinalizeProcessing(self, idl: Idl):
-        # We have two choices of adding an enum:
+        # We have two choices of adding a bitmap:
         #   - inside a cluster if a code exists
         #   - inside top level if a code does not exist
         if not self._cluster_codes:
-            # Log only instead of critical, as not our XML is well formed.
-            # For example at the time of writing this, SwitchFeature in switch-cluster.xml
-            # did not have a code associated with it.
-            LOGGER.error("Bitmap %r has no cluster codes" % self._bitmap)
+            idl.global_bitmaps.append(self._bitmap)
             return
 
         for code in self._cluster_codes:
@@ -337,6 +354,47 @@ class BitmapHandler(BaseHandler):
 
     def EndProcessing(self):
         self.context.AddIdlPostProcessor(self)
+
+
+class FeaturesHandler(BaseHandler):
+    """Handles .../features 
+
+       Attaches a "Feature" bitmap to the given structure
+    """
+
+    def __init__(self, context: Context, cluster: Cluster):
+        super().__init__(context)
+        self._features = Bitmap(name='Feature', base_type="bitmap32", entries=[])
+        self._cluster = cluster
+
+    def GetNextProcessor(self, name, attrs):
+        if name.lower() == 'feature':
+            self._features.entries.append(ConstantEntry(
+                name=attrs['name'],
+                code=1 << ParseInt(attrs['bit']),
+            ))
+
+            # Sub-elements are conformance which is not representable in IDL
+            return BaseHandler(self.context, handled=HandledDepth.ENTIRE_TREE)
+        return BaseHandler(self.context)
+
+    def EndProcessing(self):
+        if self._features.entries:
+            self._cluster.bitmaps.append(self._features)
+
+
+class DescriptionHandler(BaseHandler):
+    """Handles .../description text elements
+
+       Attaches a "description" attribute to a given structure
+    """
+
+    def __init__(self, context: Context, target: Any):
+        super().__init__(context, handled=HandledDepth.SINGLE_TAG)
+        self.target = target
+
+    def HandleContent(self, content):
+        self.target.description = content
 
 
 class CommandHandler(BaseHandler):
@@ -421,6 +479,11 @@ class CommandHandler(BaseHandler):
             self._struct.fields.append(self.GetArgumentField(attrs))
             return BaseHandler(self.context, handled=HandledDepth.SINGLE_TAG)
         elif name.lower() == 'description':
+            if self._command:
+                return DescriptionHandler(self.context, self._command)
+            return BaseHandler(self.context, handled=HandledDepth.ENTIRE_TREE)
+        elif _IsConformanceTagName(name):
+            # we do not parse conformance at this point
             return BaseHandler(self.context, handled=HandledDepth.ENTIRE_TREE)
         else:
             return BaseHandler(self.context)
@@ -472,12 +535,11 @@ class ClusterGlobalAttributeHandler(BaseHandler):
 class ClusterHandler(BaseHandler):
     """Handles /configurator/cluster elements."""
 
-    def __init__(self, context: Context, idl: Idl):
+    def __init__(self, context: Context, idl: Optional[Idl]):
         super().__init__(context)
         self._cluster = Cluster(
-            side=ClusterSide.CLIENT,
-            name=None,
-            code=None,
+            name="NAME-MISSING",
+            code=-1,
             parse_meta=context.GetCurrentLocationMeta()
         )
         self._idl = idl
@@ -496,7 +558,11 @@ class ClusterHandler(BaseHandler):
             return ClusterGlobalAttributeHandler(self.context, self._cluster, ParseInt(attrs['code']))
         elif name.lower() == 'command':
             return CommandHandler(self.context, self._cluster, attrs)
-        elif name.lower() in ['define', 'description', 'domain', 'tag', 'client', 'server']:
+        elif name.lower() == 'description':
+            return DescriptionHandler(self.context, self._cluster)
+        elif name.lower() == 'features':
+            return FeaturesHandler(self.context, self._cluster)
+        elif name.lower() in ['define', 'domain', 'tag', 'client', 'server']:
             # NOTE: we COULD use client and server to create separate definitions
             #       of each, but the usefulness of this is unclear as the definitions are
             #       likely identical and matter has no concept of differences between the two
@@ -505,9 +571,11 @@ class ClusterHandler(BaseHandler):
             return BaseHandler(self.context)
 
     def EndProcessing(self):
-        if self._cluster.name is None:
+        if not self._idl:
+            raise Exception("Missing idl")
+        if self._cluster.name == "NAME-MISSING":
             raise Exception("Missing cluster name")
-        elif self._cluster.code is None:
+        elif self._cluster.code == -1:
             raise Exception("Missing cluster code")
 
         self._idl.clusters.append(self._cluster)

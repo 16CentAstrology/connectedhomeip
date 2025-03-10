@@ -29,6 +29,7 @@
 #include <platform/CHIPDeviceConfig.h>
 
 #include <fstream>
+#include <string>
 
 //-> format_version = 1
 //-> vendor_id = 0xFFF1/0xFFF2/0xFFF3
@@ -48,7 +49,7 @@
 //-> dac_origin_vendor_id is not present
 //-> dac_origin_product_id is not present
 #if CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID == 0xFFF2
-constexpr const uint8_t kCdForAllExamples[541] = {
+constexpr const uint8_t kCdForAllExamples[] = {
     0x30, 0x82, 0x02, 0x19, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02, 0xa0, 0x82, 0x02, 0x0a, 0x30, 0x82,
     0x02, 0x06, 0x02, 0x01, 0x03, 0x31, 0x0d, 0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x30,
     0x82, 0x01, 0x70, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01, 0xa0, 0x82, 0x01, 0x61, 0x04, 0x82, 0x01,
@@ -77,7 +78,7 @@ constexpr const uint8_t kCdForAllExamples[541] = {
     0x96, 0x6c, 0x79, 0x4f, 0x1c, 0x4d, 0xd7, 0x5d, 0x15, 0x03, 0x24, 0xd8, 0xa5, 0xca, 0x82, 0x3d
 };
 #elif CHIP_DEVICE_CONFIG_DEVICE_VENDOR_ID == 0xFFF3
-constexpr const uint8_t kCdForAllExamples[539] = {
+constexpr const uint8_t kCdForAllExamples[] = {
     0x30, 0x82, 0x02, 0x17, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02, 0xa0, 0x82, 0x02, 0x08, 0x30, 0x82,
     0x02, 0x04, 0x02, 0x01, 0x03, 0x31, 0x0d, 0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x30,
     0x82, 0x01, 0x70, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01, 0xa0, 0x82, 0x01, 0x61, 0x04, 0x82, 0x01,
@@ -106,7 +107,7 @@ constexpr const uint8_t kCdForAllExamples[539] = {
     0x98, 0x96, 0xc7, 0xc9, 0xc8, 0x2d, 0x4b, 0xf5, 0x76, 0xd3, 0x8f, 0xbd, 0x36, 0x5b
 };
 #else  /* Fall back to the VID=0xFFF1 CD */
-constexpr const uint8_t kCdForAllExamples[540] = {
+constexpr const uint8_t kCdForAllExamples[] = {
     0x30, 0x82, 0x02, 0x17, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02, 0xa0, 0x82, 0x02, 0x08, 0x30, 0x82,
     0x02, 0x04, 0x02, 0x01, 0x03, 0x31, 0x0d, 0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x30,
     0x82, 0x01, 0x70, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01, 0xa0, 0x82, 0x01, 0x61, 0x04, 0x82, 0x01,
@@ -176,6 +177,11 @@ bool ReadValue(Json::Value jsonValue)
     return false;
 }
 
+uint16_t ReadUint16(Json::Value jsonValue)
+{
+    return static_cast<uint16_t>(jsonValue.asUInt());
+}
+
 // TODO: This should be moved to a method of P256Keypair
 CHIP_ERROR LoadKeypairFromRaw(ByteSpan private_key, ByteSpan public_key, Crypto::P256Keypair & keypair)
 {
@@ -196,14 +202,15 @@ TestHarnessDACProvider::TestHarnessDACProvider()
 
 void TestHarnessDACProvider::Init(const char * filepath)
 {
-    constexpr const char kDacCertKey[]      = "dac_cert";
-    constexpr const char kDacPrivateKey[]   = "dac_private_key";
-    constexpr const char kDacPublicKey[]    = "dac_public_key";
-    constexpr const char kPaiCertKey[]      = "pai_cert";
-    constexpr const char kCertDecKey[]      = "certification_declaration";
-    constexpr const char kFirmwareInfoKey[] = "firmware_information";
-    constexpr const char kIsSuccessKey[]    = "is_success_case";
-    constexpr const char kDescription[]     = "description";
+    static constexpr char kDacCertKey[]      = "dac_cert";
+    static constexpr char kDacPrivateKey[]   = "dac_private_key";
+    static constexpr char kDacPublicKey[]    = "dac_public_key";
+    static constexpr char kPaiCertKey[]      = "pai_cert";
+    static constexpr char kCertDecKey[]      = "certification_declaration";
+    static constexpr char kFirmwareInfoKey[] = "firmware_information";
+    static constexpr char kIsSuccessKey[]    = "is_success_case";
+    static constexpr char kDescription[]     = "description";
+    static constexpr char kPid[]             = "basic_info_pid";
 
     std::ifstream json(filepath, std::ifstream::binary);
     if (!json)
@@ -271,6 +278,11 @@ void TestHarnessDACProvider::Init(const char * filepath)
         data.description.SetValue(ReadValue(root[kDescription], buf, sizeof(buf)));
     }
 
+    if (root.isMember(kPid))
+    {
+        data.pid.SetValue(ReadUint16(root[kPid]));
+    }
+
     Init(data);
 }
 
@@ -287,6 +299,8 @@ void TestHarnessDACProvider::Init(const TestHarnessDACProviderData & data)
 
     // TODO: We need a real example FirmwareInformation to be populated.
     mFirmwareInformation = data.firmwareInformation.HasValue() ? data.firmwareInformation.Value() : ByteSpan();
+
+    mPid = data.pid.ValueOr(0x8000);
 }
 
 CHIP_ERROR TestHarnessDACProvider::GetDeviceAttestationCert(MutableByteSpan & out_dac_buffer)
@@ -315,8 +329,8 @@ CHIP_ERROR TestHarnessDACProvider::SignWithDeviceAttestationKey(const ByteSpan &
     Crypto::P256ECDSASignature signature;
     Crypto::P256Keypair keypair;
 
-    VerifyOrReturnError(IsSpanUsable(out_signature_buffer), CHIP_ERROR_INVALID_ARGUMENT);
-    VerifyOrReturnError(IsSpanUsable(message_to_sign), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(!out_signature_buffer.empty(), CHIP_ERROR_INVALID_ARGUMENT);
+    VerifyOrReturnError(!message_to_sign.empty(), CHIP_ERROR_INVALID_ARGUMENT);
     VerifyOrReturnError(out_signature_buffer.size() >= signature.Capacity(), CHIP_ERROR_BUFFER_TOO_SMALL);
 
     // In a non-exemplary implementation, the public key is not needed here. It is used here merely because

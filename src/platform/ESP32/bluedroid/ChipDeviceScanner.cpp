@@ -14,19 +14,9 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-#if CONFIG_ENABLE_ESP32_BLE_CONTROLLER
 
 #include <platform/ESP32/ChipDeviceScanner.h>
 
-#include "esp_bt.h"
-#include "esp_bt_main.h"
-#include "esp_gap_ble_api.h"
-#include "esp_gatt_common_api.h"
-#include "esp_gatt_defs.h"
-#include "esp_gattc_api.h"
-#include "esp_gatts_api.h"
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
 #include <lib/support/CodeUtils.h>
 #include <lib/support/logging/CHIPLogging.h>
 
@@ -80,7 +70,7 @@ void ChipDeviceScanner::RemoveDevice()
 
 CHIP_ERROR ChipDeviceScanner::StartScan(uint16_t timeout)
 {
-    ReturnErrorCodeIf(mIsScanning, CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(!mIsScanning, CHIP_ERROR_INCORRECT_STATE);
 
     static esp_ble_scan_params_t ble_scan_params = { .scan_type          = BLE_SCAN_TYPE_PASSIVE,
                                                      .own_addr_type      = BLE_ADDR_TYPE_RANDOM,
@@ -108,7 +98,7 @@ CHIP_ERROR ChipDeviceScanner::StartScan(uint16_t timeout)
 
 CHIP_ERROR ChipDeviceScanner::StopScan()
 {
-    ReturnErrorCodeIf(!mIsScanning, CHIP_NO_ERROR);
+    VerifyOrReturnError(mIsScanning, CHIP_NO_ERROR);
 
     int rc = esp_ble_gap_stop_scanning();
     if (rc != 0)
@@ -116,6 +106,7 @@ CHIP_ERROR ChipDeviceScanner::StopScan()
         ChipLogError(DeviceLayer, "ble_gap_disc_cancel failed: %d", rc);
         return CHIP_ERROR_INTERNAL;
     }
+
     mIsScanning = false;
     mDelegate->OnScanComplete();
     return CHIP_NO_ERROR;
@@ -124,4 +115,3 @@ CHIP_ERROR ChipDeviceScanner::StopScan()
 } // namespace Internal
 } // namespace DeviceLayer
 } // namespace chip
-#endif // CONFIG_ENABLE_ESP32_BLE_CONTROLLER

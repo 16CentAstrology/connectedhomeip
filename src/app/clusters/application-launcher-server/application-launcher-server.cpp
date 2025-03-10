@@ -29,15 +29,19 @@
 
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <app/AttributeAccessInterface.h>
+#include <app/AttributeAccessInterfaceRegistry.h>
 #include <app/CommandHandler.h>
 #include <app/ConcreteCommandPath.h>
+#include <app/data-model/Encode.h>
+#include <app/util/attribute-storage.h>
 #include <app/util/config.h>
+#include <platform/CHIPDeviceConfig.h>
+
+#include <string>
+
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
 #include <app/app-platform/ContentAppPlatform.h>
 #endif // CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
-#include <app/data-model/Encode.h>
-#include <app/util/attribute-storage.h>
-#include <platform/CHIPDeviceConfig.h>
 
 using namespace chip;
 using namespace chip::app::Clusters;
@@ -48,7 +52,8 @@ using namespace chip::AppPlatform;
 using namespace chip::Uint8;
 
 static constexpr size_t kApplicationLauncherDelegateTableSize =
-    EMBER_AF_APPLICATION_LAUNCHER_CLUSTER_SERVER_ENDPOINT_COUNT + CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT;
+    MATTER_DM_APPLICATION_LAUNCHER_CLUSTER_SERVER_ENDPOINT_COUNT + CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT;
+static_assert(kApplicationLauncherDelegateTableSize <= kEmberInvalidEndpointIndex, "ApplicationLauncher Delegate table size error");
 
 // -----------------------------------------------------------------------------
 // Delegate Implementation
@@ -74,8 +79,9 @@ Delegate * GetDelegate(EndpointId endpoint)
 #endif // CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
     ChipLogProgress(Zcl, "ApplicationLauncher NOT returning ContentApp delegate for endpoint:%u", endpoint);
 
-    uint16_t ep = emberAfFindClusterServerEndpointIndex(endpoint, ApplicationLauncher::Id);
-    return ((ep == 0xFFFF || ep >= EMBER_AF_APPLICATION_LAUNCHER_CLUSTER_SERVER_ENDPOINT_COUNT) ? nullptr : gDelegateTable[ep]);
+    uint16_t ep = emberAfGetClusterServerEndpointIndex(endpoint, ApplicationLauncher::Id,
+                                                       MATTER_DM_APPLICATION_LAUNCHER_CLUSTER_SERVER_ENDPOINT_COUNT);
+    return (ep >= kApplicationLauncherDelegateTableSize ? nullptr : gDelegateTable[ep]);
 }
 
 bool isDelegateNull(Delegate * delegate, EndpointId endpoint)
@@ -96,9 +102,10 @@ namespace ApplicationLauncher {
 
 void SetDefaultDelegate(EndpointId endpoint, Delegate * delegate)
 {
-    uint16_t ep = emberAfFindClusterServerEndpointIndex(endpoint, ApplicationLauncher::Id);
-    // if endpoint is found and is not a dynamic endpoint
-    if (ep != 0xFFFF && ep < EMBER_AF_APPLICATION_LAUNCHER_CLUSTER_SERVER_ENDPOINT_COUNT)
+    uint16_t ep = emberAfGetClusterServerEndpointIndex(endpoint, ApplicationLauncher::Id,
+                                                       MATTER_DM_APPLICATION_LAUNCHER_CLUSTER_SERVER_ENDPOINT_COUNT);
+    // if endpoint is found
+    if (ep < kApplicationLauncherDelegateTableSize)
     {
         gDelegateTable[ep] = delegate;
     }
@@ -107,13 +114,13 @@ void SetDefaultDelegate(EndpointId endpoint, Delegate * delegate)
     }
 }
 
-bool HasFeature(chip::EndpointId endpoint, ApplicationLauncherFeature feature)
+bool HasFeature(chip::EndpointId endpoint, Feature feature)
 {
     bool hasFeature     = false;
     uint32_t featureMap = 0;
 
-    EmberAfStatus status = Attributes::FeatureMap::Get(endpoint, &featureMap);
-    if (EMBER_ZCL_STATUS_SUCCESS == status)
+    Status status = Attributes::FeatureMap::Get(endpoint, &featureMap);
+    if (Status::Success == status)
     {
         hasFeature = (featureMap & chip::to_underlying(feature));
     }
@@ -125,7 +132,7 @@ bool HasFeature(chip::EndpointId endpoint, ApplicationLauncherFeature feature)
 CHIP_ERROR Delegate::HandleGetCurrentApp(app::AttributeValueEncoder & aEncoder)
 {
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
-    if (HasFeature(ApplicationLauncherFeature::kApplicationPlatform))
+    if (HasFeature(Feature::kApplicationPlatform))
     {
         auto & platform = ContentAppPlatform::GetInstance();
         if (platform.HasCurrentApp())
@@ -246,22 +253,22 @@ bool emberAfApplicationLauncherClusterLaunchAppCallback(app::CommandHandler * co
         //  2. Set current app to Content App
         //  3. Set Content App status (basic cluster) to ACTIVE_VISIBLE_FOCUS
         //  4. Call launch app command on Content App
-        if (delegate->HasFeature(ApplicationLauncherFeature::kApplicationPlatform))
+        if (delegate->HasFeature(Feature::kApplicationPlatform))
         {
-            ChipLogError(Zcl, "ApplicationLauncher has content platform feature");
+            ChipLogProgress(Zcl, "ApplicationLauncher has content platform feature");
             ContentApp * app = ContentAppPlatform::GetInstance().LoadContentApp(&vendorApp);
             if (app == nullptr)
             {
                 ChipLogError(Zcl, "ApplicationLauncher target app not found");
                 LauncherResponseType response;
-                response.status = ApplicationLauncherStatusEnum::kAppNotAvailable;
+                response.status = StatusEnum::kAppNotAvailable;
                 responder.Success(response);
                 return true;
             }
 
             ContentAppPlatform::GetInstance().SetCurrentApp(app);
 
-            ChipLogError(Zcl, "ApplicationLauncher handling launch on ContentApp");
+            ChipLogProgress(Zcl, "ApplicationLauncher handling launch on ContentApp");
             app->GetApplicationLauncherDelegate()->HandleLaunchApp(responder, data.HasValue() ? data.Value() : ByteSpan(),
                                                                    application.Value());
             return true;
@@ -271,11 +278,11 @@ bool emberAfApplicationLauncherClusterLaunchAppCallback(app::CommandHandler * co
        //  1. Set Content App status (basic cluster) to ACTIVE_VISIBLE_FOCUS
        //  2. Call launch app command on the given endpoint
 
-        ChipLogError(Zcl, "ApplicationLauncher no content platform feature");
+        ChipLogProgress(Zcl, "ApplicationLauncher no content platform feature");
         ApplicationBasic::Delegate * appBasic = ApplicationBasic::GetDefaultDelegate(endpoint);
         if (appBasic != nullptr)
         {
-            ChipLogError(Zcl, "ApplicationLauncher setting basic cluster status to visible");
+            ChipLogProgress(Zcl, "ApplicationLauncher setting basic cluster status to visible");
             appBasic->SetApplicationStatus(ApplicationStatusEnum::kActiveVisibleFocus);
         }
 
@@ -285,17 +292,17 @@ bool emberAfApplicationLauncherClusterLaunchAppCallback(app::CommandHandler * co
         {
             ContentAppPlatform::GetInstance().SetCurrentApp(app);
         }
-        else
+        else if (delegate->HasFeature(Feature::kApplicationPlatform))
         {
-            ChipLogError(Zcl, "ApplicationLauncher target app not found");
+            ChipLogProgress(Zcl, "ApplicationLauncher target app not found");
             LauncherResponseType response;
-            response.status = ApplicationLauncherStatusEnum::kAppNotAvailable;
+            response.status = StatusEnum::kAppNotAvailable;
             responder.Success(response);
             return true;
         }
 #endif // CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
 
-        ChipLogError(Zcl, "ApplicationLauncher handling launch");
+        ChipLogProgress(Zcl, "ApplicationLauncher handling launch");
         delegate->HandleLaunchApp(responder, data.HasValue() ? data.Value() : ByteSpan(), application.Value());
     }
 
@@ -340,25 +347,25 @@ bool emberAfApplicationLauncherClusterStopAppCallback(app::CommandHandler * comm
         //  3. If this was the current app then stop it
         //  2. Set Content App status (basic cluster) to ACTIVE_STOPPED
         //  4. Call stop app command on Content App
-        if (delegate->HasFeature(ApplicationLauncherFeature::kApplicationPlatform))
+        if (delegate->HasFeature(Feature::kApplicationPlatform))
         {
-            ChipLogError(Zcl, "ApplicationLauncher has content platform feature");
+            ChipLogProgress(Zcl, "ApplicationLauncher has content platform feature");
             ContentApp * app = ContentAppPlatform::GetInstance().LoadContentApp(&vendorApp);
             if (app == nullptr)
             {
                 ChipLogError(Zcl, "ApplicationLauncher target app not loaded");
                 LauncherResponseType response;
-                response.status = ApplicationLauncherStatusEnum::kAppNotAvailable;
+                response.status = StatusEnum::kAppNotAvailable;
                 responder.Success(response);
                 return true;
             }
 
             ContentAppPlatform::GetInstance().UnsetIfCurrentApp(app);
 
-            ChipLogError(Zcl, "ApplicationLauncher setting app status");
+            ChipLogProgress(Zcl, "ApplicationLauncher setting app status");
             app->GetApplicationBasicDelegate()->SetApplicationStatus(ApplicationStatusEnum::kStopped);
 
-            ChipLogError(Zcl, "ApplicationLauncher handling stop on ContentApp");
+            ChipLogProgress(Zcl, "ApplicationLauncher handling stop on ContentApp");
             app->GetApplicationLauncherDelegate()->HandleStopApp(responder, application.Value());
             return true;
         }
@@ -367,7 +374,7 @@ bool emberAfApplicationLauncherClusterStopAppCallback(app::CommandHandler * comm
        //  1. Set Content App status (basic cluster) to ACTIVE_STOPPED
        //  2. Call launch app command on the given endpoint
 
-        ChipLogError(Zcl, "ApplicationLauncher no content platform feature");
+        ChipLogProgress(Zcl, "ApplicationLauncher no content platform feature");
 
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
         ContentApp * app = ContentAppPlatform::GetInstance().GetContentApp(&vendorApp);
@@ -381,7 +388,7 @@ bool emberAfApplicationLauncherClusterStopAppCallback(app::CommandHandler * comm
         ApplicationBasic::Delegate * appBasic = ApplicationBasic::GetDefaultDelegate(endpoint);
         if (appBasic != nullptr)
         {
-            ChipLogError(Zcl, "ApplicationLauncher setting basic cluster status to stopped");
+            ChipLogProgress(Zcl, "ApplicationLauncher setting basic cluster status to stopped");
             appBasic->SetApplicationStatus(ApplicationStatusEnum::kStopped);
         }
 
@@ -429,22 +436,22 @@ bool emberAfApplicationLauncherClusterHideAppCallback(app::CommandHandler * comm
         //  3. If this was the current app then hide it
         //  2. Set Content App status (basic cluster) to ACTIVE_VISIBLE_NOT_FOCUS
         //  4. Call stop app command on Content App
-        if (delegate->HasFeature(ApplicationLauncherFeature::kApplicationPlatform))
+        if (delegate->HasFeature(Feature::kApplicationPlatform))
         {
-            ChipLogError(Zcl, "ApplicationLauncher has content platform feature");
+            ChipLogProgress(Zcl, "ApplicationLauncher has content platform feature");
             ContentApp * app = ContentAppPlatform::GetInstance().GetContentApp(&vendorApp);
             if (app == nullptr)
             {
                 ChipLogError(Zcl, "ApplicationLauncher target app not loaded");
                 LauncherResponseType response;
-                response.status = ApplicationLauncherStatusEnum::kAppNotAvailable;
+                response.status = StatusEnum::kAppNotAvailable;
                 responder.Success(response);
                 return true;
             }
 
             ContentAppPlatform::GetInstance().UnsetIfCurrentApp(app);
 
-            ChipLogError(Zcl, "ApplicationLauncher handling stop on ContentApp");
+            ChipLogProgress(Zcl, "ApplicationLauncher handling stop on ContentApp");
             app->GetApplicationLauncherDelegate()->HandleHideApp(responder, application.Value());
             return true;
         }
@@ -453,7 +460,7 @@ bool emberAfApplicationLauncherClusterHideAppCallback(app::CommandHandler * comm
        //  1. Set Content App status (basic cluster) to ACTIVE_VISIBLE_NOT_FOCUS
        //  2. Call launch app command on the given endpoint
 
-        ChipLogError(Zcl, "ApplicationLauncher no content platform feature");
+        ChipLogProgress(Zcl, "ApplicationLauncher no content platform feature");
 
 #if CHIP_DEVICE_CONFIG_APP_PLATFORM_ENABLED
         ContentApp * app = ContentAppPlatform::GetInstance().GetContentApp(&vendorApp);
@@ -466,7 +473,7 @@ bool emberAfApplicationLauncherClusterHideAppCallback(app::CommandHandler * comm
         ApplicationBasic::Delegate * appBasic = ApplicationBasic::GetDefaultDelegate(endpoint);
         if (appBasic != nullptr)
         {
-            ChipLogError(Zcl, "ApplicationLauncher setting basic cluster status to stopped");
+            ChipLogProgress(Zcl, "ApplicationLauncher setting basic cluster status to stopped");
             appBasic->SetApplicationStatus(ApplicationStatusEnum::kActiveHidden);
         }
 
@@ -488,5 +495,5 @@ exit:
 
 void MatterApplicationLauncherPluginServerInitCallback()
 {
-    registerAttributeAccessOverride(&gApplicationLauncherAttrAccess);
+    app::AttributeAccessInterfaceRegistry::Instance().Register(&gApplicationLauncherAttrAccess);
 }

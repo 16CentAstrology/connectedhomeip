@@ -20,15 +20,5 @@
 
 // ---- OTA Requestor Example App Config ----
 
-// Buttons config
-#define BUTTON_PORT DEVICE_DT_GET(DT_NODELABEL(gpioc))
-
-#define BUTTON_PIN_1 2
-#define BUTTON_PIN_3 3
-#define BUTTON_PIN_4 1
-#define BUTTON_PIN_2 0
-
-// LEDs config
-#define LEDS_PORT DEVICE_DT_GET(DT_NODELABEL(gpiob))
-#define SYSTEM_STATE_LED 7
-#define LIGHTING_PWM_SPEC_IDENTIFY_GREEN PWM_DT_SPEC_GET(DT_ALIAS(pwm_led3))
+#define APP_SET_DEVICE_INFO_PROVIDER 1
+#define APP_SET_NETWORK_COMM_ENDPOINT_SEC 1

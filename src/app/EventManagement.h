@@ -27,14 +27,16 @@
 #pragma once
 
 #include "EventLoggingDelegate.h"
-#include "EventLoggingTypes.h"
 #include <access/SubjectDescriptor.h>
+#include <app/EventLoggingTypes.h>
+#include <app/EventReporter.h>
 #include <app/MessageDef/EventDataIB.h>
 #include <app/MessageDef/StatusIB.h>
-#include <app/ObjectList.h>
+#include <app/data-model-provider/EventsGenerator.h>
 #include <app/util/basic-types.h>
 #include <lib/core/TLVCircularBuffer.h>
 #include <lib/support/CHIPCounter.h>
+#include <lib/support/LinkedList.h>
 #include <messaging/ExchangeMgr.h>
 #include <platform/CHIPDeviceConfig.h>
 #include <system/SystemClock.h>
@@ -70,9 +72,9 @@
 
 namespace chip {
 namespace app {
-constexpr const uint32_t kEventManagementProfile = 0x1;
-constexpr const uint32_t kFabricIndexTag         = 0x1;
-constexpr size_t kMaxEventSizeReserve            = 512;
+inline constexpr const uint32_t kEventManagementProfile = 0x1;
+inline constexpr const uint32_t kFabricIndexTag         = 0x1;
+inline constexpr size_t kMaxEventSizeReserve            = 512;
 constexpr uint16_t kRequiredEventField =
     (1 << to_underlying(EventDataIB::Tag::kPriority)) | (1 << to_underlying(EventDataIB::Tag::kPath));
 
@@ -196,7 +198,7 @@ struct LogStorageResources
  *   more space for new events.
  */
 
-class EventManagement
+class EventManagement : public DataModel::EventsGenerator
 {
 public:
     /**
@@ -224,11 +226,15 @@ public:
      *                                   time 0" for cases when we use
      *                                   system-time event timestamps.
      *
+     * @param[in] apEventReporter       Event reporter to be notified when events are generated.
+     *
+     * @return CHIP_ERROR               CHIP Error Code
+     *
      */
-    void Init(Messaging::ExchangeManager * apExchangeManager, uint32_t aNumBuffers, CircularEventBuffer * apCircularEventBuffer,
-              const LogStorageResources * const apLogStorageResources,
-              MonotonicallyIncreasingCounter<EventNumber> * apEventNumberCounter,
-              System::Clock::Milliseconds64 aMonotonicStartupTime);
+    CHIP_ERROR Init(Messaging::ExchangeManager * apExchangeManager, uint32_t aNumBuffers,
+                    CircularEventBuffer * apCircularEventBuffer, const LogStorageResources * const apLogStorageResources,
+                    MonotonicallyIncreasingCounter<EventNumber> * apEventNumberCounter,
+                    System::Clock::Milliseconds64 aMonotonicStartupTime, EventReporter * apEventReporter);
 
     static EventManagement & GetInstance();
 
@@ -359,7 +365,7 @@ public:
      *                                       available.
      *
      */
-    CHIP_ERROR FetchEventsSince(chip::TLV::TLVWriter & aWriter, const ObjectList<EventPathParams> * apEventPathList,
+    CHIP_ERROR FetchEventsSince(chip::TLV::TLVWriter & aWriter, const SingleLinkedListNode<EventPathParams> * apEventPathList,
                                 EventNumber & aEventMin, size_t & aEventCount,
                                 const Access::SubjectDescriptor & aSubjectDescriptor);
     /**
@@ -387,6 +393,10 @@ public:
      */
     void SetScheduledEventInfo(EventNumber & aEventNumber, uint32_t & aInitialWrittenEventBytes) const;
 
+    /* EventsGenerator implementation */
+    CHIP_ERROR GenerateEvent(EventLoggingDelegate * eventPayloadWriter, const EventOptions & options,
+                             EventNumber & generatedEventNumber) override;
+
 private:
     /**
      * @brief
@@ -399,9 +409,9 @@ private:
         int mFieldsToRead = 0;
         /* PriorityLevel and DeltaTime are there if that is not first event when putting events in report*/
 #if CHIP_DEVICE_CONFIG_EVENT_LOGGING_UTC_TIMESTAMPS
-        Timestamp mCurrentTime = Timestamp::System(System::Clock::kZero);
-#else  // CHIP_DEVICE_CONFIG_EVENT_LOGGING_UTC_TIMESTAMPS
         Timestamp mCurrentTime = Timestamp::Epoch(System::Clock::kZero);
+#else  // CHIP_DEVICE_CONFIG_EVENT_LOGGING_UTC_TIMESTAMPS
+        Timestamp mCurrentTime = Timestamp::System(System::Clock::kZero);
 #endif // CHIP_DEVICE_CONFIG_EVENT_LOGGING_UTC_TIMESTAMPS
         PriorityLevel mPriority  = PriorityLevel::First;
         ClusterId mClusterId     = 0;
@@ -558,6 +568,9 @@ private:
     Timestamp mLastEventTimestamp;    ///< The timestamp of the last event in this buffer
 
     System::Clock::Milliseconds64 mMonotonicStartupTime;
+
+    EventReporter * mpEventReporter = nullptr;
 };
+
 } // namespace app
 } // namespace chip
