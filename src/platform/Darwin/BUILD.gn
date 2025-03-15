@@ -63,17 +63,20 @@ static_library("Darwin") {
     "DnssdHostNameRegistrar.cpp",
     "DnssdImpl.cpp",
     "DnssdImpl.h",
+    "DnssdType.cpp",
     "InetPlatformConfig.h",
-    "LoggingImpl.cpp",
     "MdnsError.cpp",
     "MdnsError.h",
     "NetworkCommissioningDriver.h",
     "PlatformManagerImpl.cpp",
     "PlatformManagerImpl.h",
+    "PlatformMetricKeys.h",
     "PosixConfig.cpp",
     "PosixConfig.h",
     "SystemPlatformConfig.h",
     "SystemTimeSupport.cpp",
+    "UserDefaults.h",
+    "UserDefaults.mm",
   ]
 
   if (chip_enable_wifi) {
@@ -96,8 +99,12 @@ static_library("Darwin") {
 
   deps = [
     ":logging",
+    ":tracing",
+    "${chip_root}/src/app:app_config",
     "${chip_root}/src/lib/dnssd:platform_header",
+    "${chip_root}/src/platform/logging:headers",
     "${chip_root}/src/setup_payload",
+    "${chip_root}/src/tracing",
   ]
 
   public_deps = [
@@ -117,29 +124,43 @@ static_library("Darwin") {
 
   if (chip_enable_ble) {
     sources += [
-      "BleApplicationDelegate.h",
+      "BleApplicationDelegateImpl.h",
       "BleApplicationDelegateImpl.mm",
-      "BleConnectionDelegate.h",
+      "BleConnectionDelegateImpl.h",
       "BleConnectionDelegateImpl.mm",
-      "BlePlatformDelegate.h",
+      "BlePlatformDelegateImpl.h",
       "BlePlatformDelegateImpl.mm",
-      "UUIDHelper.h",
-      "UUIDHelperImpl.mm",
+      "BleUtils.h",
+      "BleUtils.mm",
     ]
   }
 }
 
+source_set("tracing") {
+  sources = [
+    "Tracing.h",
+    "Tracing.mm",
+  ]
+
+  deps = [
+    ":logging",
+    "${chip_root}/src/tracing",
+  ]
+}
+
 static_library("logging") {
   sources = [
+    "DispatchQueueNames.cpp",
+    "DispatchQueueNames.h",
     "Logging.h",
     "Logging.mm",
   ]
 
   deps = [
-    "${chip_root}/src/lib/core:chip_config_header",  # for lib/support/Span.h
     "${chip_root}/src/lib/support:attributes",
     "${chip_root}/src/lib/support:logging_constants",
-    "${nlassert_root}:nlassert",  # for lib/support/Span.h
+    "${chip_root}/src/lib/support:span",
+    "${chip_root}/src/platform/logging:headers",
   ]
 
   configs += [ "${chip_root}/src:includes" ]

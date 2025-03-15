@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-#if CONFIG_ENABLE_ESP32_BLE_CONTROLLER
-
 #include "blecent.h"
 #include <lib/support/CodeUtils.h>
 #include <lib/support/logging/CHIPLogging.h>
@@ -97,7 +95,7 @@ int ChipDeviceScanner::OnBleCentralEvent(struct ble_gap_event * event, void * ar
 
 CHIP_ERROR ChipDeviceScanner::StartScan(uint16_t timeout)
 {
-    ReturnErrorCodeIf(mIsScanning, CHIP_ERROR_INCORRECT_STATE);
+    VerifyOrReturnError(!mIsScanning, CHIP_ERROR_INCORRECT_STATE);
 
     uint8_t ownAddrType;
     struct ble_gap_disc_params discParams;
@@ -137,7 +135,7 @@ CHIP_ERROR ChipDeviceScanner::StartScan(uint16_t timeout)
 
 CHIP_ERROR ChipDeviceScanner::StopScan()
 {
-    ReturnErrorCodeIf(!mIsScanning, CHIP_NO_ERROR);
+    VerifyOrReturnError(mIsScanning, CHIP_NO_ERROR);
 
     int rc = ble_gap_disc_cancel();
     if (rc != 0)
@@ -153,4 +151,3 @@ CHIP_ERROR ChipDeviceScanner::StopScan()
 } // namespace Internal
 } // namespace DeviceLayer
 } // namespace chip
-#endif // CONFIG_ENABLE_ESP32_BLE_CONTROLLER

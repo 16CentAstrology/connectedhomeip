@@ -106,9 +106,7 @@ matter_get_compiler_flags_from_targets("${CONFIG_CHIP_EXTERNAL_TARGETS}")
 matter_add_flags(-D__LINUX_ERRNO_EXTENSIONS__=1)
 matter_add_flags(-DCHIP_ADDRESS_RESOLVE_IMPL_INCLUDE_HEADER=<lib/address_resolve/AddressResolve_DefaultImpl.h>)
 
-if (CONFIG_CHIP_PW_RPC)
-    matter_add_gnu_cpp_standard("17")
-endif()
+matter_add_gnu_cpp_standard("17")
 
 if (CONFIG_MBED_BSD_SOCKET_TRACE)
     matter_add_flags(-DMBED_BSD_SOCKET_TRACE=1)
@@ -209,6 +207,10 @@ list(APPEND CHIP_DEFINES
     PW_RPC_USE_GLOBAL_MUTEX=0
 )
 
+# TODO: Update this to use target_link_libraries instead of
+# target_include_directories. target_include_directories never should be used to
+# access other libraries since it does not add source files to the build graph
+# and does not support transitive dependencies.
 target_include_directories(${APP_TARGET} PRIVATE
                     ${PIGWEED_ROOT}/pw_sys_io/public
                     ${PIGWEED_ROOT}/pw_assert/public
@@ -241,6 +243,7 @@ target_include_directories(${APP_TARGET} PRIVATE
                     ${PIGWEED_ROOT}/pw_function/public
                     ${PIGWEED_ROOT}/pw_preprocessor/public
                     ${PIGWEED_ROOT}/pw_rpc/system_server/public
+                    ${PIGWEED_ROOT}/pw_toolchain/public
                     ${PIGWEED_ROOT}/third_party/fuchsia/repo/sdk/lib/fit/include
                     ${PIGWEED_ROOT}/third_party/fuchsia/repo/sdk/lib/stdcompat/include
                     ${CHIP_ROOT}/third_party/nanopb/repo

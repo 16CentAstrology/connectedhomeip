@@ -15,11 +15,22 @@
 #    limitations under the License.
 #
 
+import ast
+import builtins
+import inspect
+import math
 import re
 import string
 from abc import ABC, abstractmethod
+from typing import List
 
 from .errors import TestStepError
+from .fixes import fix_typed_yaml_value
+
+
+def print_to_log(*objects, sep=' ', end=None):
+    # Try to fit in with the test logger output format
+    print('\n\t\t    ' + sep.join(str(arg) for arg in objects))
 
 
 class ConstraintParseError(Exception):
@@ -114,6 +125,16 @@ class ConstraintNotValueError(ConstraintCheckError):
         super().__init__(context, 'notValue', reason)
 
 
+class ConstraintAnyOfError(ConstraintCheckError):
+    def __init__(self, context, reason):
+        super().__init__(context, 'anyOf', reason)
+
+
+class ConstraintPythonError(ConstraintCheckError):
+    def __init__(self, context, reason):
+        super().__init__(context, 'python', reason)
+
+
 class BaseConstraint(ABC):
     '''Constraint Interface'''
 
@@ -123,7 +144,7 @@ class BaseConstraint(ABC):
         self._is_null_allowed = is_null_allowed
         self._context = context
 
-    def validate(self, value, value_type_name):
+    def validate(self, value, value_type_name, runtime_variables):
         if value is None and self._is_null_allowed:
             return
 
@@ -185,9 +206,13 @@ class BaseConstraint(ABC):
             raise ConstraintMaxValueError(self._context, reason)
         elif isinstance(self, _ConstraintNotValue):
             raise ConstraintNotValueError(self._context, reason)
+        elif isinstance(self, _ConstraintAnyOf):
+            raise ConstraintAnyOfError(self._context, reason)
+        elif isinstance(self, _ConstraintPython):
+            raise ConstraintPythonError(self._context, reason)
         else:
             # This should not happens.
-            raise ConstraintParseError(f'Unknown constraint instance.')
+            raise ConstraintParseError('Unknown constraint instance.')
 
 
 class _ConstraintHasValue(BaseConstraint):
@@ -195,7 +220,7 @@ class _ConstraintHasValue(BaseConstraint):
         super().__init__(context, types=[])
         self._has_value = has_value
 
-    def validate(self, value, value_type_name):
+    def validate(self, value, value_type_name, runtime_variables):
         # We are overriding the BaseConstraint of validate since has value is a special case where
         # we might not be expecting a value at all, but the basic null check in BaseConstraint
         # is not what we want.
@@ -211,7 +236,7 @@ class _ConstraintHasValue(BaseConstraint):
 
     def get_reason(self, value, value_type_name) -> str:
         if self._has_value:
-            return f"The constraint expects a value but there isn't one."
+            return "The constraint expects a value but there isn't one."
         return f"The response contains the value ({value}), but wasn't expecting any value."
 
 
@@ -223,6 +248,8 @@ class _ConstraintType(BaseConstraint):
     def check_response(self, value, value_type_name) -> bool:
         success = False
         if self._type == 'boolean' and type(value) is bool:
+            success = True
+        elif self._type == 'struct' and type(value) is dict:
             success = True
         elif self._type == 'list' and type(value) is list:
             success = True
@@ -350,6 +377,10 @@ class _ConstraintType(BaseConstraint):
             success = value >= -36028797018963967 and value <= 36028797018963967
         elif self._type == 'nullable_int64s' and type(value) is int:
             success = value >= -9223372036854775807 and value <= 9223372036854775807
+        elif self._type == 'single' and type(value) is float:
+            success = self._is_single(value)
+        elif self._type == 'double' and type(value) is float:
+            success = self._is_double(value)
         else:
             success = self._type == value_type_name
         return success
@@ -359,6 +390,8 @@ class _ConstraintType(BaseConstraint):
 
         if type(value) is bool:
             types.append('boolean')
+        elif type(value) is dict:
+            types.append('struct')
         elif type(value) is list:
             types.append('list')
         elif type(value) is str:
@@ -490,6 +523,12 @@ class _ConstraintType(BaseConstraint):
             if value >= -9223372036854775807 and value <= 9223372036854775807:
                 types.append('nullable_int64s')
 
+            if self._is_single(value):
+                types.append('single')
+
+            if self._is_double(value):
+                types.append('double')
+
         types.sort(key=lambda input_type: [int(c) if c.isdigit(
         ) else c for c in re.split('([0-9]+)', input_type)])
 
@@ -497,15 +536,24 @@ class _ConstraintType(BaseConstraint):
             types.append(value_type_name)
 
         if len(types) == 1:
-            reason = f'The response type {types[0]}) does not match the constraint.'
+            reason = f'The response type ({types[0]}) does not match the constraint.'
         else:
             reason = f'The response value ({value}) is of one of those types: {types}.'
         return reason
 
+    def _is_single(self, value):
+        return (value >= -1.7976931348623157E+308 and value <= -2.2250738585072014E-308) or value == 0.0 or (
+            value >= 2.2250738585072014E-308 and value <= 1.7976931348623157E+308) or math.isnan(value) or math.isinf(value)
+
+    def _is_double(self, value):
+        return (value >= -1.7976931348623157E+308 and value <= -2.2250738585072014E-308) or value == 0.0 or (
+            value >= 2.2250738585072014E-308 and value <= 1.7976931348623157E+308) or math.isnan(value) or math.isinf(value)
+
 
 class _ConstraintMinLength(BaseConstraint):
     def __init__(self, context, min_length):
-        super().__init__(context, types=[str, bytes, list])
+        super().__init__(context, types=[
+            str, bytes, list], is_null_allowed=True)
         self._min_length = min_length
 
     def check_response(self, value, value_type_name) -> bool:
@@ -517,7 +565,8 @@ class _ConstraintMinLength(BaseConstraint):
 
 class _ConstraintMaxLength(BaseConstraint):
     def __init__(self, context, max_length):
-        super().__init__(context, types=[str, bytes, list])
+        super().__init__(context, types=[
+            str, bytes, list], is_null_allowed=True)
         self._max_length = max_length
 
     def check_response(self, value, value_type_name) -> bool:
@@ -540,7 +589,7 @@ class _ConstraintIsHexString(BaseConstraint):
             chars = []
 
             for char in value:
-                if not char in string.hexdigits:
+                if char not in string.hexdigits:
                     chars.append(char)
 
             if len(chars) == 1:
@@ -582,7 +631,9 @@ class _ConstraintIsUpperCase(BaseConstraint):
         self._is_upper_case = is_upper_case
 
     def check_response(self, value, value_type_name) -> bool:
-        return value.isupper() == self._is_upper_case
+        # Make sure we don't have any lowercase characters.
+        hasLower = any(c.islower() for c in value)
+        return hasLower != self._is_upper_case
 
     def get_reason(self, value, value_type_name) -> str:
         if self._is_upper_case:
@@ -608,7 +659,9 @@ class _ConstraintIsLowerCase(BaseConstraint):
         self._is_lower_case = is_lower_case
 
     def check_response(self, value, value_type_name) -> bool:
-        return value.islower() == self._is_lower_case
+        # Make sure we don't have any uppercase characters.
+        hasUpper = any(c.isupper() for c in value)
+        return hasUpper != self._is_lower_case
 
     def get_reason(self, value, value_type_name) -> str:
         if self._is_lower_case:
@@ -652,20 +705,53 @@ class _ConstraintMaxValue(BaseConstraint):
         return f'The response value ({value}) should be lower or equal to the constraint but {value} > {self._max_value}.'
 
 
+def _values_match(expected_value, received_value):
+    # TODO: This is a copy of _response_value_validation over in parser.py,
+    # but with the recursive calls renamed.
+    if isinstance(expected_value, list):
+        if len(expected_value) != len(received_value):
+            return False
+
+        for index, expected_item in enumerate(expected_value):
+            received_item = received_value[index]
+            if not _values_match(expected_item, received_item):
+                return False
+        return True
+    elif isinstance(expected_value, dict):
+        for key, expected_item in expected_value.items():
+            received_item = received_value.get(key)
+            if not _values_match(expected_item, received_item):
+                return False
+        return True
+    else:
+        return expected_value == received_value
+
+
 class _ConstraintContains(BaseConstraint):
     def __init__(self, context, contains):
         super().__init__(context, types=[list])
         self._contains = contains
 
+    def _find_missing_values(self, expected_values, received_values):
+        # Make a copy of received_values, so that we can remove things from the
+        # list as they match up against our expected values.
+        received_values = list(received_values)
+        missing_values = []
+        for expected_value in expected_values:
+            for index, received_value in enumerate(received_values):
+                if _values_match(expected_value, received_value):
+                    # We've used up this received value
+                    del received_values[index]
+                    break
+            else:
+                missing_values.append(expected_value)
+        return missing_values
+
     def check_response(self, value, value_type_name) -> bool:
-        return set(self._contains).issubset(value)
+        return len(self._find_missing_values(self._contains, value)) == 0
 
     def get_reason(self, value, value_type_name) -> str:
-        expected_values = []
-
-        for expected_value in self._contains:
-            if expected_value not in value:
-                expected_values.append(expected_value)
+        expected_values = self._find_missing_values(self._contains, value)
 
         return f'The response ({value}) is missing {expected_values}.'
 
@@ -676,14 +762,19 @@ class _ConstraintExcludes(BaseConstraint):
         self._excludes = excludes
 
     def check_response(self, value, value_type_name) -> bool:
-        return set(self._excludes).isdisjoint(value)
+        for expected_value in self._excludes:
+            for received_value in value:
+                if _values_match(expected_value, received_value):
+                    return False
+        return True
 
     def get_reason(self, value, value_type_name) -> str:
         unexpected_values = []
 
         for unexpected_value in self._excludes:
-            if unexpected_value in value:
-                unexpected_values.append(unexpected_value)
+            for received_value in value:
+                if _values_match(unexpected_value, received_value):
+                    unexpected_values.append(unexpected_value)
 
         return f'The response ({value}) contains {unexpected_values}.'
 
@@ -694,7 +785,7 @@ class _ConstraintHasMaskSet(BaseConstraint):
         self._has_masks_set = has_masks_set
 
     def check_response(self, value, value_type_name) -> bool:
-        return all([(value & mask) == mask for mask in self._has_masks_set])
+        return all([(value & mask) != 0 for mask in self._has_masks_set])
 
     def get_reason(self, value, value_type_name) -> str:
         expected_masks = []
@@ -726,17 +817,70 @@ class _ConstraintHasMaskClear(BaseConstraint):
 
 class _ConstraintNotValue(BaseConstraint):
     def __init__(self, context, not_value):
-        super().__init__(context, types=[], is_null_allowed=True)
+        # NOTE: do not use is_null_allowed=True here, because 'notValue: null' needs to work.
+        super().__init__(context, types=[])
         self._not_value = not_value
 
     def check_response(self, value, value_type_name) -> bool:
         return value != self._not_value
 
     def get_reason(self, value, value_type_name) -> str:
-        return f'The response value "{value}" should differs from the constraint.'
+        return f'The response value "{value}" should differ from the constraint.'
 
 
-def get_constraints(constraints: dict) -> list[BaseConstraint]:
+class _ConstraintAnyOf(BaseConstraint):
+    def __init__(self, context, any_of):
+        super().__init__(context, types=[], is_null_allowed=True)
+        self._any_of = any_of
+
+    def check_response(self, value, value_type_name) -> bool:
+        return value in self._any_of
+
+    def get_reason(self, value, value_type_name) -> str:
+        return f'The response value "{value}" is not a value from {self._any_of}.'
+
+
+class _ConstraintPython(BaseConstraint):
+    def __init__(self, context, source: str):
+        super().__init__(context, types=[], is_null_allowed=False)
+
+        # Parse the source as the body of a function
+        if '\n' not in source:  # treat single line code like a lambda
+            source = 'return (' + source + ')\n'
+        parsed = ast.parse(source)
+        module = ast.parse('def _func(value): pass')
+        module.body[0].body = parsed.body  # inject parsed body
+        self._ast = module
+
+    def validate(self, value, value_type_name, runtime_variables):
+        # Build a global scope that includes all runtime variables
+        scope = {name: fix_typed_yaml_value(value) for name, value in runtime_variables.items()}
+        scope['__builtins__'] = self.BUILTINS
+        # Execute the module AST and extract the defined function
+        exec(compile(self._ast, '<string>', 'exec'), scope)
+        func = scope['_func']
+        # Call the function to validate the value
+        try:
+            valid = func(value)
+        except Exception as ex:
+            self._raise_error(f'Python constraint {type(ex).__name__}: {ex}')
+        if type(valid) is not bool:
+            self._raise_error("Python constraint TypeError: must return a bool")
+        if not valid:
+            self._raise_error(f'The response value "{value}" is not valid')
+
+    def check_response(self, value, value_type_name) -> bool: pass  # unused
+    def get_reason(self, value, value_type_name) -> str: pass  # unused
+
+    # Explicitly list allowed functions / constants, avoid things like exec, eval, import. Classes are generally safe.
+    ALLOWED_BUILTINS = ['True', 'False', 'None', 'abs', 'all', 'any', 'ascii', 'bin', 'chr', 'divmod', 'enumerate', 'filter', 'format',
+                        'hex', 'isinstance', 'issubclass', 'iter', 'len', 'max', 'min', 'next', 'oct', 'ord', 'pow', 'repr', 'round', 'sorted', 'sum']
+    BUILTINS = (dict(inspect.getmembers(builtins, inspect.isclass)) |
+                {name: getattr(builtins, name) for name in ALLOWED_BUILTINS} |
+                {'print': print_to_log})
+
+
+def get_constraints(constraints: dict) -> List[BaseConstraint]:
     _constraints = []
     context = constraints
 
@@ -788,6 +932,12 @@ def get_constraints(constraints: dict) -> list[BaseConstraint]:
         elif 'notValue' == constraint:
             _constraints.append(_ConstraintNotValue(
                 context, constraint_value))
+        elif 'anyOf' == constraint:
+            _constraints.append(_ConstraintAnyOf(
+                context, constraint_value))
+        elif 'python' == constraint:
+            _constraints.append(_ConstraintPython(
+                context, constraint_value))
         else:
             raise ConstraintParseError(f'Unknown constraint type:{constraint}')
 
@@ -812,9 +962,15 @@ def is_typed_constraint(constraint: str):
         'hasMasksSet': False,
         'hasMasksClear': False,
         'notValue': True,
+        'anyOf': True,
+        'python': False,
     }
 
     is_typed = constraints.get(constraint)
     if is_typed is None:
         raise ConstraintParseError(f'Unknown constraint type:{constraint}')
     return is_typed
+
+
+def is_variable_aware_constraint(constraint: str):
+    return constraint == 'python'

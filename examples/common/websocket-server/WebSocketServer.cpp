@@ -23,9 +23,11 @@
 
 #include <deque>
 #include <mutex>
+#include <string>
 
-constexpr uint16_t kDefaultWebSocketServerPort = 9002;
-constexpr uint16_t kMaxMessageBufferLen        = 8192;
+constexpr uint16_t kDefaultWebSocketServerPort                 = 9002;
+constexpr uint16_t kMaxMessageBufferLen                        = 8192;
+[[maybe_unused]] constexpr char kWebSocketServerReadyMessage[] = "== WebSocket Server Ready";
 
 namespace {
 lws * gWebSocketInstance = nullptr;
@@ -110,20 +112,21 @@ static int OnWebSocketCallback(lws * wsi, lws_callback_reasons reason, void * us
 {
     LogWebSocketCallbackReason(reason);
 
-    WebSocketServer * server = nullptr;
-    auto protocol            = lws_get_protocol(wsi);
-    if (protocol)
+    if (LWS_CALLBACK_RECEIVE == reason)
     {
+        WebSocketServer * server = nullptr;
+        auto protocol            = lws_get_protocol(wsi);
+        if (!protocol)
+        {
+            ChipLogError(chipTool, "Failed to retrieve the protocol.");
+            return -1;
+        }
         server = static_cast<WebSocketServer *>(protocol->user);
         if (nullptr == server)
         {
             ChipLogError(chipTool, "Failed to retrieve the server interactive context.");
             return -1;
         }
-    }
-
-    if (LWS_CALLBACK_RECEIVE == reason)
-    {
         char msg[kMaxMessageBufferLen + 1 /* for null byte */] = {};
         VerifyOrDie(sizeof(msg) > len);
         memcpy(msg, in, len);
@@ -152,6 +155,10 @@ static int OnWebSocketCallback(lws * wsi, lws_callback_reasons reason, void * us
     {
         gWebSocketInstance = nullptr;
     }
+    else if (LWS_CALLBACK_PROTOCOL_INIT == reason)
+    {
+        ChipLogProgress(chipTool, "%s", kWebSocketServerReadyMessage);
+    }
 
     return 0;
 }
@@ -165,10 +172,15 @@ CHIP_ERROR WebSocketServer::Run(chip::Optional<uint16_t> port, WebSocketServerDe
 
     lws_context_creation_info info;
     memset(&info, 0, sizeof(info));
-    info.port             = port.ValueOr(kDefaultWebSocketServerPort);
-    info.iface            = nullptr;
-    info.pt_serv_buf_size = kMaxMessageBufferLen;
-    info.protocols        = protocols;
+    info.port                         = port.ValueOr(kDefaultWebSocketServerPort);
+    info.iface                        = nullptr;
+    info.pt_serv_buf_size             = kMaxMessageBufferLen;
+    info.protocols                    = protocols;
+    static const lws_retry_bo_t retry = {
+        .secs_since_valid_ping   = 400,
+        .secs_since_valid_hangup = 420,
+    };
+    info.retry_and_idle_policy = &retry;
 
     auto context = lws_create_context(&info);
     VerifyOrReturnError(nullptr != context, CHIP_ERROR_INTERNAL);

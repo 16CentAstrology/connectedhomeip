@@ -1,7 +1,6 @@
 #include <app/util/config.h>
 #include <static-supported-modes-manager.h>
 
-using namespace std;
 using namespace chip;
 using namespace chip::app::Clusters;
 using namespace chip::app::Clusters::ModeSelect;
@@ -35,11 +34,9 @@ storage_value_type StaticSupportedModesManager::coffeeOptions[] = {
     buildModeOptionStruct("Espresso", 7, List<const SemanticTag>(semanticTagsEspresso))
 };
 const StaticSupportedModesManager::EndpointSpanPair
-    StaticSupportedModesManager::supportedOptionsByEndpoints[EMBER_AF_MODE_SELECT_CLUSTER_SERVER_ENDPOINT_COUNT] = {
+    StaticSupportedModesManager::supportedOptionsByEndpoints[MATTER_DM_MODE_SELECT_CLUSTER_SERVER_ENDPOINT_COUNT] = {
         EndpointSpanPair(1, Span<storage_value_type>(StaticSupportedModesManager::coffeeOptions)) // Options for Endpoint 1
     };
-
-const StaticSupportedModesManager StaticSupportedModesManager::instance = StaticSupportedModesManager();
 
 SupportedModesManager::ModeOptionsProvider StaticSupportedModesManager::getModeOptionsProvider(EndpointId endpointId) const
 {
@@ -73,11 +70,6 @@ Status StaticSupportedModesManager::getModeOptionByMode(unsigned short endpointI
             return Status::Success;
         }
     }
-    emberAfPrintln(EMBER_AF_PRINT_DEBUG, "Cannot find the mode %u", mode);
+    ChipLogProgress(Zcl, "Cannot find the mode %u", mode);
     return Status::InvalidCommand;
-}
-
-const ModeSelect::SupportedModesManager * ModeSelect::getSupportedModesManager()
-{
-    return &StaticSupportedModesManager::instance;
 }

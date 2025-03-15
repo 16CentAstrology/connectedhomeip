@@ -21,9 +21,9 @@
 #include "esp_log.h"
 #include <app-common/zap-generated/attributes/Accessors.h>
 #include <app-common/zap-generated/ids/Clusters.h>
-#include <app/server/OnboardingCodesUtil.h>
 #include <app/server/Server.h>
-#include <app/util/af-enums.h>
+#include <setup_payload/OnboardingCodesUtil.h>
+
 #include <app/util/attribute-storage.h>
 #include <lib/support/CodeUtils.h>
 #include <lock/AppConfig.h>
@@ -59,7 +59,6 @@ StackType_t appStack[APP_TASK_STACK_SIZE / sizeof(StackType_t)];
 
 using namespace ::chip::DeviceLayer;
 using namespace ::chip::System;
-// using namespace ESP32DoorLock::LockInitParams;
 
 AppTask AppTask::sAppTask;
 
@@ -73,7 +72,7 @@ CHIP_ERROR AppTask::StartAppTask()
     }
 
     // Start App task.
-    sAppTaskHandle = xTaskCreate(AppTaskMain, APP_TASK_NAME, ArraySize(appStack), NULL, 1, NULL);
+    sAppTaskHandle = xTaskCreate(AppTaskMain, APP_TASK_NAME, MATTER_ARRAY_SIZE(appStack), NULL, 1, NULL);
     return sAppTaskHandle ? CHIP_NO_ERROR : APP_ERROR_CREATE_TASK_FAILED;
 }
 
@@ -86,6 +85,8 @@ CHIP_ERROR AppTask::Init()
                                   (void *) this,    // init timer id = app task obj context
                                   TimerEventHandler // timer callback handler
     );
+
+    chip::DeviceLayer::StackLock lock;
     CHIP_ERROR err = BoltLockMgr().InitLockState();
 
     BoltLockMgr().SetCallbacks(ActionInitiated, ActionCompleted);
@@ -98,7 +99,7 @@ CHIP_ERROR AppTask::Init()
 
     sLockLED.Set(!BoltLockMgr().IsUnlocked());
 
-    chip::DeviceLayer::SystemLayer().ScheduleWork(UpdateClusterState, nullptr);
+    chip::DeviceLayer::PlatformMgr().ScheduleWork(UpdateClusterState, reinterpret_cast<intptr_t>(nullptr));
 
     ConfigurationMgr().LogDeviceConfig();
 
@@ -321,7 +322,7 @@ void AppTask::FunctionHandler(AppEvent * aEvent)
     }
     else
     {
-        // If the button was released before factory reset got initiated, start BLE advertissement in fast mode
+        // If the button was released before factory reset got initiated, start BLE advertisement in fast mode
         if (sAppTask.mFunctionTimerActive && sAppTask.mFunction == kFunction_StartBleAdv)
         {
             sAppTask.CancelTimer();
@@ -335,7 +336,7 @@ void AppTask::FunctionHandler(AppEvent * aEvent)
             }
             else
             {
-                ESP_LOGI(TAG, "Network is already provisioned, Ble advertissement not enabled");
+                ESP_LOGI(TAG, "Network is already provisioned, Ble advertisement not enabled");
             }
         }
         else if (sAppTask.mFunctionTimerActive && sAppTask.mFunction == kFunction_FactoryReset)
@@ -421,6 +422,11 @@ void AppTask::ActionCompleted(BoltLockManager::Action_t aAction)
 
         sLockLED.Set(false);
     }
+    if (sAppTask.mSyncClusterToButtonAction)
+    {
+        chip::DeviceLayer::PlatformMgr().ScheduleWork(UpdateClusterState, reinterpret_cast<intptr_t>(nullptr));
+        sAppTask.mSyncClusterToButtonAction = false;
+    }
 }
 
 void AppTask::PostLockActionRequest(int32_t aActor, BoltLockManager::Action_t aAction)
@@ -457,14 +463,14 @@ void AppTask::DispatchEvent(AppEvent * aEvent)
 }
 
 /* if unlocked then it locked it first*/
-void AppTask::UpdateClusterState(chip::System::Layer *, void * context)
+void AppTask::UpdateClusterState(intptr_t context)
 {
     uint8_t newValue = !BoltLockMgr().IsUnlocked();
 
     // write the new on/off value
-    EmberAfStatus status = chip::app::Clusters::OnOff::Attributes::OnOff::Set(1, newValue);
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
+    Protocols::InteractionModel::Status status = chip::app::Clusters::OnOff::Attributes::OnOff::Set(1, newValue);
+    if (status != Protocols::InteractionModel::Status::Success)
     {
-        ESP_LOGI(TAG, "ERR: updating on/off %x", status);
+        ESP_LOGI(TAG, "ERR: updating on/off %x", to_underlying(status));
     }
 }

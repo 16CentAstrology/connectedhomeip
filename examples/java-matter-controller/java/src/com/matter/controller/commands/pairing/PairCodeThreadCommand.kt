@@ -18,9 +18,29 @@
 package com.matter.controller.commands.pairing
 
 import chip.devicecontroller.ChipDeviceController
+import chip.devicecontroller.CommissionParameters
 import com.matter.controller.commands.common.CredentialsIssuer
 
 class PairCodeThreadCommand(controller: ChipDeviceController, credsIssue: CredentialsIssuer?) :
-  PairingCommand(controller, "code-thread", credsIssue, PairingModeType.CODE, PairingNetworkType.THREAD) {
-  override fun runCommand() {}
+  PairingCommand(
+    controller,
+    "code-thread",
+    credsIssue,
+    PairingModeType.CODE,
+    PairingNetworkType.THREAD
+  ) {
+  override fun runCommand() {
+    val commissionParams =
+      CommissionParameters.Builder().setNetworkCredentials(getThreadNetworkCredentials()).build()
+    currentCommissioner()
+      .pairDeviceWithCode(
+        getNodeId(),
+        getOnboardingPayload(),
+        getDiscoverOnce(),
+        getUseOnlyOnNetworkDiscovery(),
+        commissionParams
+      )
+    currentCommissioner().setCompletionListener(this)
+    waitCompleteMs(getTimeoutMillis())
+  }
 }

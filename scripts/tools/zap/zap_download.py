@@ -23,6 +23,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from typing import Optional
 
@@ -32,7 +33,7 @@ import requests
 try:
     import coloredlogs
     _has_coloredlogs = True
-except:
+except ImportError:
     _has_coloredlogs = False
 
 # Supported log levels, mapping string values required for argument
@@ -58,10 +59,10 @@ def _GetDefaultExtractRoot():
 
 
 def _LogPipeLines(pipe, prefix):
-    l = logging.getLogger().getChild(prefix)
+    log = logging.getLogger().getChild(prefix)
     for line in iter(pipe.readline, b''):
         line = line.strip().decode('utf-8', errors="ignore")
-        l.info('%s' % line)
+        log.info('%s' % line)
 
 
 def _ExecuteProcess(cmd, cwd):
@@ -93,7 +94,7 @@ def _SetupSourceZap(install_directory: str, zap_version: str):
         install_directory
     )
 
-    _ExecuteProcess(f"npm ci".split(), install_directory)
+    _ExecuteProcess("npm ci".split(), install_directory)
 
 
 def _SetupReleaseZap(install_directory: str, zap_version: str):
@@ -105,20 +106,46 @@ def _SetupReleaseZap(install_directory: str, zap_version: str):
 
     if sys.platform == 'linux':
         zap_platform = 'linux'
+        arch = os.uname().machine
     elif sys.platform == 'darwin':
         zap_platform = 'mac'
+        arch = os.uname().machine
+    elif sys.platform == 'win32':
+        zap_platform = 'win'
+        # os.uname is not implemented on Windows, so use an alternative instead.
+        import platform
+        arch = platform.uname().machine
     else:
         raise Exception('Unknown platform - do not know what zip file to download.')
 
-    url = f"https://github.com/project-chip/zap/releases/download/{zap_version}/zap-{zap_platform}.zip"
+    if arch == 'arm64':
+        zap_arch = 'arm64'
+    elif arch == 'x86_64' or arch == 'AMD64':
+        zap_arch = 'x64'
+    else:
+        raise Exception(f'Unknown architecture "${arch}" - do not know what zip file to download.')
+
+    url = f"https://github.com/project-chip/zap/releases/download/{zap_version}/zap-{zap_platform}-{zap_arch}.zip"
 
     logging.info("Fetching: %s", url)
 
     r = requests.get(url, stream=True)
-    z = zipfile.ZipFile(io.BytesIO(r.content))
-
-    logging.info("Data downloaded, extracting ...")
-    z.extractall(install_directory)
+    if zap_platform == 'mac':
+        # zipfile does not support symlinks (https://github.com/python/cpython/issues/82102),
+        # making a zap.app extracted with it unusable due to embedded frameworks.
+        with tempfile.NamedTemporaryFile(suffix='.zip') as tf:
+            for chunk in r.iter_content(chunk_size=4096):
+                tf.write(chunk)
+            tf.flush()
+            os.makedirs(install_directory, exist_ok=True)
+            _ExecuteProcess(['/usr/bin/unzip', '-oq', tf.name], install_directory)
+    else:
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        logging.info("Data downloaded, extracting ...")
+        # extractall() does not preserve permissions (https://github.com/python/cpython/issues/59999)
+        for entry in z.filelist:
+            path = z.extract(entry, install_directory)
+            os.chmod(path, (entry.external_attr >> 16) & 0o777)
     logging.info("Done extracting.")
 
 
@@ -207,17 +234,21 @@ def main(log_level: str, sdk_root: str, extract_root: str, zap_version: Optional
 
     install_directory = os.path.join(extract_root, f"zap-{zap_version}")
 
+    export_cmd = "export"
+    if sys.platform == 'win32':
+        export_cmd = "set"
+
     if zap == DownloadType.SOURCE:
         install_directory = install_directory + "-src"
         _SetupSourceZap(install_directory, zap_version)
 
         # Make sure the results can be used in scripts
-        print(f"export ZAP_DEVELOPMENT_PATH={shlex.quote(install_directory)}")
+        print(f"{export_cmd} ZAP_DEVELOPMENT_PATH={shlex.quote(install_directory)}")
     else:
         _SetupReleaseZap(install_directory, zap_version)
 
         # Make sure the results can be used in scripts
-        print(f"export ZAP_INSTALL_PATH={shlex.quote(install_directory)}")
+        print(f"{export_cmd} ZAP_INSTALL_PATH={shlex.quote(install_directory)}")
 
 
 if __name__ == '__main__':

@@ -128,10 +128,10 @@ bool LockManager::ReadConfigValues()
 {
     size_t outLen;
     CYW30739Config::ReadConfigValueBin(CYW30739Config::kConfigKey_LockUser, reinterpret_cast<uint8_t *>(&mLockUsers),
-                                       sizeof(EmberAfPluginDoorLockUserInfo) * ArraySize(mLockUsers), outLen);
+                                       sizeof(EmberAfPluginDoorLockUserInfo) * MATTER_ARRAY_SIZE(mLockUsers), outLen);
 
     CYW30739Config::ReadConfigValueBin(CYW30739Config::kConfigKey_Credential, reinterpret_cast<uint8_t *>(&mLockCredentials),
-                                       sizeof(EmberAfPluginDoorLockCredentialInfo) * ArraySize(mLockCredentials), outLen);
+                                       sizeof(EmberAfPluginDoorLockCredentialInfo) * MATTER_ARRAY_SIZE(mLockCredentials), outLen);
 
     CYW30739Config::ReadConfigValueBin(CYW30739Config::kConfigKey_LockUserName, reinterpret_cast<uint8_t *>(mUserNames),
                                        sizeof(mUserNames), outLen);
@@ -650,6 +650,8 @@ const char * LockManager::lockStateToString(DlLockState lockState) const
         return "Locked";
     case DlLockState::kUnlocked:
         return "Unlocked";
+    case DlLockState::kUnlatched:
+        return "Unlatched";
     case DlLockState::kUnknownEnumValue:
         break;
     }

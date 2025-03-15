@@ -17,6 +17,7 @@
 
 #include <platform_stdlib.h>
 
+#include "AmebaObserver.h"
 #include "CHIPDeviceManager.h"
 #include "DeviceCallbacks.h"
 #include "chip_porting.h"
@@ -24,13 +25,11 @@
 
 #include <app/clusters/network-commissioning/network-commissioning.h>
 #include <app/server/Server.h>
-#include <app/util/af.h>
-#include <credentials/DeviceAttestationCredsProvider.h>
-#include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <app/util/endpoint-config-api.h>
+#include <data-model-providers/codegen/Instance.h>
 
-#include <lib/support/ErrorStr.h>
+#include <lib/core/ErrorStr.h>
 #include <platform/Ameba/AmebaConfig.h>
-#include <platform/Ameba/FactoryDataProvider.h>
 #include <platform/Ameba/NetworkCommissioningDriver.h>
 #include <platform/CHIPDeviceLayer.h>
 #include <support/CHIPMem.h>
@@ -51,7 +50,6 @@ using namespace chip::Messaging;
 using namespace chip::app::Clusters::OtaSoftwareUpdateProvider::Commands;
 
 using namespace ::chip;
-using namespace ::chip::Credentials;
 using namespace ::chip::DeviceManager;
 using namespace ::chip::DeviceLayer;
 
@@ -74,18 +72,21 @@ void NetWorkCommissioningInstInit()
 
 static DeviceCallbacks EchoCallbacks;
 chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
-chip::DeviceLayer::FactoryDataProvider mFactoryDataProvider;
 
 static void InitServer(intptr_t context)
 {
     // Init ZCL Data Model and CHIP App Server
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    static AmebaObserver sAmebaObserver;
+    initParams.dataModelProvider = CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
+    initParams.appDelegate       = &sAmebaObserver;
     chip::Server::GetInstance().Init(initParams);
     gExampleDeviceInfoProvider.SetStorageDelegate(&Server::GetInstance().GetPersistentStorage());
     chip::DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
 
     NetWorkCommissioningInstInit();
+    chip::Server::GetInstance().GetFabricTable().AddFabricDelegate(&sAmebaObserver);
 }
 
 extern "C" void ChipTest(void)
@@ -94,10 +95,6 @@ extern "C" void ChipTest(void)
     CHIP_ERROR err = CHIP_NO_ERROR;
 
     initPref();
-
-    mFactoryDataProvider.Init();
-    SetCommissionableDataProvider(&mFactoryDataProvider);
-    SetDeviceAttestationCredentialsProvider(&mFactoryDataProvider);
 
     CHIPDeviceManager & deviceMgr = CHIPDeviceManager::GetInstance();
     err                           = deviceMgr.Init(&EchoCallbacks);
@@ -109,10 +106,6 @@ extern "C" void ChipTest(void)
     {
         ChipLogProgress(DeviceLayer, "DeviceManagerInit() - OK\r\n");
     }
-
-    // Set DeviceInstanceInfoProvider after CHIPDeviceManager init
-    // CHIPDeviceManager init will set GenericDeviceInsanceInfoProvider first
-    SetDeviceInstanceInfoProvider(&mFactoryDataProvider);
 
     chip::DeviceLayer::PlatformMgr().ScheduleWork(InitServer, 0);
 }

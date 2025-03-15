@@ -24,8 +24,8 @@
 /* this file behaves like a config.h, comes first */
 #include <platform/internal/CHIPDeviceLayerInternal.h>
 
+#include <lib/core/ErrorStr.h>
 #include <lib/support/CodeUtils.h>
-#include <lib/support/ErrorStr.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/ESP32/ESP32Utils.h>
 
@@ -82,7 +82,7 @@ bool ESP32Utils::IsStationProvisioned(void)
 CHIP_ERROR ESP32Utils::IsStationConnected(bool & connected)
 {
     wifi_ap_record_t apInfo;
-    connected = (esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK);
+    connected = (esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK && apInfo.ssid[0] != 0);
     return CHIP_NO_ERROR;
 }
 
@@ -223,7 +223,7 @@ const char * ESP32Utils::WiFiModeToStr(wifi_mode_t wifiMode)
 
 struct netif * ESP32Utils::GetStationNetif(void)
 {
-    return GetNetif("WIFI_STA_DEF");
+    return GetNetif(kDefaultWiFiStationNetifKey);
 }
 
 CHIP_ERROR ESP32Utils::GetWiFiStationProvision(Internal::DeviceNetworkInfo & netInfo, bool includeCredentials)
@@ -241,7 +241,7 @@ CHIP_ERROR ESP32Utils::GetWiFiStationProvision(Internal::DeviceNetworkInfo & net
     netInfo.NetworkId              = kWiFiStationNetworkId;
     netInfo.FieldPresent.NetworkId = true;
     memcpy(netInfo.WiFiSSID, stationConfig.sta.ssid,
-           min(strlen(reinterpret_cast<char *>(stationConfig.sta.ssid)) + 1, sizeof(netInfo.WiFiSSID)));
+           std::min(strlen(reinterpret_cast<char *>(stationConfig.sta.ssid)) + 1, sizeof(netInfo.WiFiSSID)));
 
     // Enforce that netInfo wifiSSID is null terminated
     netInfo.WiFiSSID[kMaxWiFiSSIDLength] = '\0';
@@ -249,7 +249,7 @@ CHIP_ERROR ESP32Utils::GetWiFiStationProvision(Internal::DeviceNetworkInfo & net
     if (includeCredentials)
     {
         static_assert(sizeof(netInfo.WiFiKey) < 255, "Our min might not fit in netInfo.WiFiKeyLen");
-        netInfo.WiFiKeyLen = static_cast<uint8_t>(min(strlen((char *) stationConfig.sta.password), sizeof(netInfo.WiFiKey)));
+        netInfo.WiFiKeyLen = static_cast<uint8_t>(std::min(strlen((char *) stationConfig.sta.password), sizeof(netInfo.WiFiKey)));
         memcpy(netInfo.WiFiKey, stationConfig.sta.password, netInfo.WiFiKeyLen);
     }
 
@@ -268,7 +268,7 @@ CHIP_ERROR ESP32Utils::SetWiFiStationProvision(const Internal::DeviceNetworkInfo
     ReturnErrorOnFailure(ESP32Utils::EnableStationMode());
 
     // Enforce that wifiSSID is null terminated before copying it
-    memcpy(wifiSSID, netInfo.WiFiSSID, min(netInfoSSIDLen + 1, sizeof(wifiSSID)));
+    memcpy(wifiSSID, netInfo.WiFiSSID, std::min(netInfoSSIDLen + 1, sizeof(wifiSSID)));
     if (netInfoSSIDLen + 1 < sizeof(wifiSSID))
     {
         wifiSSID[netInfoSSIDLen] = '\0';
@@ -280,8 +280,8 @@ CHIP_ERROR ESP32Utils::SetWiFiStationProvision(const Internal::DeviceNetworkInfo
 
     // Initialize an ESP wifi_config_t structure based on the new provision information.
     memset(&wifiConfig, 0, sizeof(wifiConfig));
-    memcpy(wifiConfig.sta.ssid, wifiSSID, min(strlen(wifiSSID) + 1, sizeof(wifiConfig.sta.ssid)));
-    memcpy(wifiConfig.sta.password, netInfo.WiFiKey, min((size_t) netInfo.WiFiKeyLen, sizeof(wifiConfig.sta.password)));
+    memcpy(wifiConfig.sta.ssid, wifiSSID, std::min(strlen(wifiSSID) + 1, sizeof(wifiConfig.sta.ssid)));
+    memcpy(wifiConfig.sta.password, netInfo.WiFiKey, std::min((size_t) netInfo.WiFiKeyLen, sizeof(wifiConfig.sta.password)));
     wifiConfig.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
     wifiConfig.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
 
@@ -321,16 +321,25 @@ CHIP_ERROR ESP32Utils::InitWiFiStack(void)
     }
 
 #if CHIP_DEVICE_CONFIG_ENABLE_WIFI_AP
-    if (!esp_netif_create_default_wifi_ap())
+    // Lets not create a default AP interface if already present
+    if (!esp_netif_get_handle_from_ifkey(kDefaultWiFiAPNetifKey))
     {
-        ChipLogError(DeviceLayer, "Failed to create the WiFi AP netif");
-        return CHIP_ERROR_INTERNAL;
+        if (!esp_netif_create_default_wifi_ap())
+        {
+            ChipLogError(DeviceLayer, "Failed to create the WiFi AP netif");
+            return CHIP_ERROR_INTERNAL;
+        }
     }
 #endif // CHIP_DEVICE_CONFIG_ENABLE_WIFI_AP
-    if (!esp_netif_create_default_wifi_sta())
+
+    // Lets not create a default station interface if already present
+    if (!esp_netif_get_handle_from_ifkey(kDefaultWiFiStationNetifKey))
     {
-        ChipLogError(DeviceLayer, "Failed to create the WiFi STA netif");
-        return CHIP_ERROR_INTERNAL;
+        if (!esp_netif_create_default_wifi_sta())
+        {
+            ChipLogError(DeviceLayer, "Failed to create the WiFi STA netif");
+            return CHIP_ERROR_INTERNAL;
+        }
     }
 
     // Initialize the ESP WiFi layer.

@@ -18,7 +18,8 @@ import glob
 import io
 from typing import List, Optional
 
-from matter_idl.matter_idl_types import *
+from matter_idl.matter_idl_types import (Attribute, Bitmap, Cluster, Command, Enum, Event, FieldQuality, Struct, StructQuality,
+                                         StructTag)
 from matter_idl.zapxml import ParseSource, ParseXmls
 
 from .pseudo_clusters.pseudo_clusters import PseudoClusters
@@ -86,6 +87,13 @@ class SpecDefinitions:
                 if struct.tag == StructTag.RESPONSE:
                     self.__responses_by_id[code][struct.code] = struct
                     self.__responses_by_name[name][struct.name] = struct.code
+
+        self.__global_bitmaps: dict[str, Bitmap] = {b.name: b for b in idl.global_bitmaps}
+        self.__global_enums: dict[str, Bitmap] = {e.name: e for e in idl.global_enums}
+        self.__global_structs: dict[str, Bitmap] = {s.name: s for s in idl.global_structs}
+
+    def get_cluster_names(self) -> List[str]:
+        return [name for name, _ in self.__clusters_by_name.items()]
 
     def get_cluster_name(self, cluster_id: int) -> str:
         cluster = self.__clusters_by_id.get(cluster_id)
@@ -161,17 +169,17 @@ class SpecDefinitions:
 
         return None
 
-    def get_command_names(self, cluster_name: str) -> list[str]:
+    def get_command_names(self, cluster_name: str) -> List[str]:
         targets = self.__get_targets_by_cluster_name(
             cluster_name, _ItemType.Request)
         return [] if targets is None else [name for name in targets]
 
-    def get_event_names(self, cluster_name: str) -> list[str]:
+    def get_event_names(self, cluster_name: str) -> List[str]:
         targets = self.__get_targets_by_cluster_name(
             cluster_name, _ItemType.Event)
         return [] if targets is None else [name for name in targets]
 
-    def get_attribute_names(self, cluster_name: str) -> list[str]:
+    def get_attribute_names(self, cluster_name: str) -> List[str]:
         targets = self.__get_targets_by_cluster_name(
             cluster_name, _ItemType.Attribute)
         return [] if targets is None else [name for name in targets]
@@ -253,9 +261,26 @@ class SpecDefinitions:
             _ItemType.Struct: self.__structs_by_name,
         }
 
+        global_target_mapping = {
+            _ItemType.Request: None,
+            _ItemType.Response: None,
+            _ItemType.Attribute: None,
+            _ItemType.Event: None,
+            _ItemType.Bitmap: self.__global_bitmaps,
+            _ItemType.Enum: self.__global_enums,
+            _ItemType.Struct: self.__global_structs,
+        }
+
         # The idl parser remove spaces
         cluster_name = cluster_name.replace(' ', '')
-        return target_mapping[target_type].get(cluster_name)
+        global_target = global_target_mapping[target_type]
+        target = target_mapping[target_type].get(cluster_name)
+
+        if target is None:
+            return global_target
+        if global_target is None:
+            return target
+        return target | global_target
 
 
 def SpecDefinitionsFromPaths(paths: str, pseudo_clusters: Optional[PseudoClusters] = PseudoClusters([])):

@@ -47,6 +47,10 @@ def build_actual_output(root: str, out: str, args: List[str]) -> List[str]:
         'NXP_K32W0_SDK_ROOT': 'TEST_NXP_K32W0_SDK_ROOT',
         'IMX_SDK_ROOT': 'IMX_SDK_ROOT',
         'TI_SYSCONFIG_ROOT': 'TEST_TI_SYSCONFIG_ROOT',
+        'JAVA_HOME': 'TEST_JAVA_HOME',
+        'GSDK_ROOT': 'TEST_GSDK_ROOT',
+        'WISECONNECT_SDK_ROOT': 'TEST_WISECONNECT_SDK_ROOT',
+        'WIFI_SDK_ROOT': 'TEST_WIFI_SDK_ROOT',
     })
 
     retval = subprocess.run([
@@ -104,12 +108,11 @@ class TestBuilder(unittest.TestCase):
         # build options do not change too much
         TARGETS = [
             'esp32-devkitc-light-rpc',
-            'esp32-m5stack-all-clusters-minimal-rpc-ipv6only',
             'android-arm64-chip-tool',
             'nrf-nrf52840dk-pump',
-            'efr32-brd4161a-light-rpc-no-version',
-            'openiotsdk-lock',
-            'openiotsdk-shell'
+            'efr32-brd4187c-light-rpc-no-version',
+            'openiotsdk-lock-mbedtls',
+            'openiotsdk-shell-mbedtls'
         ]
 
         for target in TARGETS:

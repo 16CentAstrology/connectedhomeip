@@ -24,11 +24,15 @@
 
 #pragma once
 
+#include "door-lock-delegate.h"
 #include <app-common/zap-generated/cluster-objects.h>
+#include <app/AttributeAccessInterface.h>
 #include <app/CommandHandler.h>
 #include <app/ConcreteCommandPath.h>
-#include <app/util/af.h>
+#include <app/reporting/reporting.h>
+#include <app/util/attribute-storage.h>
 #include <app/util/config.h>
+#include <platform/CHIPDeviceConfig.h>
 #include <protocols/interaction_model/StatusCode.h>
 
 #ifndef DOOR_LOCK_SERVER_ENDPOINT
@@ -43,7 +47,6 @@ using chip::app::Clusters::DoorLock::DataOperationTypeEnum;
 using chip::app::Clusters::DoorLock::DaysMaskMap;
 using chip::app::Clusters::DoorLock::DlLockState;
 using chip::app::Clusters::DoorLock::DlStatus;
-using chip::app::Clusters::DoorLock::DoorLockFeature;
 using chip::app::Clusters::DoorLock::DoorStateEnum;
 using chip::app::Clusters::DoorLock::LockDataTypeEnum;
 using chip::app::Clusters::DoorLock::LockOperationTypeEnum;
@@ -59,7 +62,17 @@ using chip::app::DataModel::NullNullable;
 using CredentialStruct  = chip::app::Clusters::DoorLock::Structs::CredentialStruct::Type;
 using LockOpCredentials = CredentialStruct;
 
-typedef bool (*RemoteLockOpHandler)(chip::EndpointId endpointId, const Optional<chip::ByteSpan> & pinCode,
+/**
+ * Handler for executing remote lock operations.
+ *
+ * @param endpointId endpoint for which remote lock command is called
+ * @param fabricIdx fabric index responsible for operating the lock
+ * @param nodeId node id responsible for operating the lock
+ * @param pinCode PIN code (optional)
+ * @param err error code if door locking failed (set only if retval==false)
+ */
+typedef bool (*RemoteLockOpHandler)(chip::EndpointId endpointId, const Nullable<chip::FabricIndex> & fabricIdx,
+                                    const Nullable<chip::NodeId> & nodeId, const Optional<chip::ByteSpan> & pinCode,
                                     OperationErrorEnum & err);
 
 static constexpr size_t DOOR_LOCK_MAX_USER_NAME_SIZE = 10; /**< Maximum size of the user name (in characters). */
@@ -73,17 +86,43 @@ struct EmberAfDoorLockEndpointContext
 {
     chip::System::Clock::Timestamp lockoutEndTimestamp;
     int wrongCodeEntryAttempts;
+    chip::app::Clusters::DoorLock::Delegate * delegate = nullptr;
 };
 
 /**
  * @brief Door Lock Server Plugin class.
  */
-class DoorLockServer
+class DoorLockServer : public chip::app::AttributeAccessInterface
 {
 public:
+    DoorLockServer() : AttributeAccessInterface(chip::Optional<chip::EndpointId>::Missing(), chip::app::Clusters::DoorLock::Id) {}
     static DoorLockServer & Instance();
 
-    void InitServer(chip::EndpointId endpointId);
+    using Feature                       = chip::app::Clusters::DoorLock::Feature;
+    using OnFabricRemovedCustomCallback = void (*)(chip::EndpointId endpointId, chip::FabricIndex fabricIndex);
+
+    /**
+     * Multiple InitEndpoint calls can happen for different endpoints.  Calling
+     * InitEndpoint twice for the same endpoint requires a ShutdownEndpoint call
+     * for that endpoint in between.
+     *
+     * A DoorLock::Delegate is optional, but needs to be provided in either
+     * InitEndpoint or in a separate SetDelegate call for Aliro features, and
+     * possibly other new features, to work.
+     */
+    CHIP_ERROR InitEndpoint(chip::EndpointId endpointId, chip::app::Clusters::DoorLock::Delegate * delegate = nullptr);
+
+    void ShutdownEndpoint(chip::EndpointId endpointId);
+
+    // InitServer is a deprecated alias for InitEndpoint with no delegate.
+    void InitServer(chip::EndpointId endpointid);
+
+    /**
+     * Delegate is not supposed to be null. Removing a delegate
+     * should only happen when shutting down the door lock cluster on the
+     * endpoint, via ShutdownEndpoint.
+     */
+    CHIP_ERROR SetDelegate(chip::EndpointId endpointId, chip::app::Clusters::DoorLock::Delegate * delegate);
 
     /**
      * Updates the LockState attribute with new value and sends LockOperation event.
@@ -93,12 +132,16 @@ public:
      * @param endpointId ID of the endpoint to the lock state
      * @param newLockState new lock state
      * @param opSource source of the operation (will be used in the event).
+     * @param fabricIdx fabric index responsible for operating the lock
+     * @param nodeId node id responsible for operating the lock
      *
      * @return true on success, false on failure.
      */
     bool SetLockState(chip::EndpointId endpointId, DlLockState newLockState, OperationSourceEnum opSource,
                       const Nullable<uint16_t> & userIndex                        = NullNullable,
-                      const Nullable<List<const LockOpCredentials>> & credentials = NullNullable);
+                      const Nullable<List<const LockOpCredentials>> & credentials = NullNullable,
+                      const Nullable<chip::FabricIndex> & fabricIdx               = NullNullable,
+                      const Nullable<chip::NodeId> & nodeId                       = NullNullable);
 
     /**
      * Updates the LockState attribute with new value.
@@ -142,50 +185,84 @@ public:
 
     bool SendLockAlarmEvent(chip::EndpointId endpointId, AlarmCodeEnum alarmCode);
 
-    chip::BitFlags<DoorLockFeature> GetFeatures(chip::EndpointId endpointId);
+    static chip::BitFlags<Feature> GetFeatures(chip::EndpointId endpointId);
 
-    inline bool SupportsPIN(chip::EndpointId endpointId) { return GetFeatures(endpointId).Has(DoorLockFeature::kPinCredential); }
+    static inline bool SupportsPIN(chip::EndpointId endpointId) { return GetFeatures(endpointId).Has(Feature::kPinCredential); }
 
-    inline bool SupportsRFID(chip::EndpointId endpointId) { return GetFeatures(endpointId).Has(DoorLockFeature::kRfidCredential); }
+    static inline bool SupportsRFID(chip::EndpointId endpointId) { return GetFeatures(endpointId).Has(Feature::kRfidCredential); }
 
-    inline bool SupportsFingers(chip::EndpointId endpointId)
+    static inline bool SupportsFingers(chip::EndpointId endpointId)
     {
-        return GetFeatures(endpointId).Has(DoorLockFeature::kFingerCredentials);
+        return GetFeatures(endpointId).Has(Feature::kFingerCredentials);
     }
 
-    inline bool SupportsFace(chip::EndpointId endpointId) { return GetFeatures(endpointId).Has(DoorLockFeature::kFaceCredentials); }
+    static inline bool SupportsFace(chip::EndpointId endpointId) { return GetFeatures(endpointId).Has(Feature::kFaceCredentials); }
 
-    inline bool SupportsWeekDaySchedules(chip::EndpointId endpointId)
+    static inline bool SupportsWeekDaySchedules(chip::EndpointId endpointId)
     {
-        return GetFeatures(endpointId).Has(DoorLockFeature::kWeekDayAccessSchedules);
+        return GetFeatures(endpointId).Has(Feature::kWeekDayAccessSchedules);
     }
 
-    inline bool SupportsYearDaySchedules(chip::EndpointId endpointId)
+    static inline bool SupportsYearDaySchedules(chip::EndpointId endpointId)
     {
-        return GetFeatures(endpointId).Has(DoorLockFeature::kYearDayAccessSchedules);
+        return GetFeatures(endpointId).Has(Feature::kYearDayAccessSchedules);
     }
 
-    inline bool SupportsHolidaySchedules(chip::EndpointId endpointId)
+    static inline bool SupportsHolidaySchedules(chip::EndpointId endpointId)
     {
-        return GetFeatures(endpointId).Has(DoorLockFeature::kHolidaySchedules);
+        return GetFeatures(endpointId).Has(Feature::kHolidaySchedules);
     }
 
-    inline bool SupportsAnyCredential(chip::EndpointId endpointId)
+    static inline bool SupportsAnyCredential(chip::EndpointId endpointId)
     {
         return GetFeatures(endpointId)
-            .HasAny(DoorLockFeature::kPinCredential, DoorLockFeature::kRfidCredential, DoorLockFeature::kFingerCredentials,
-                    DoorLockFeature::kFaceCredentials);
+            .HasAny(Feature::kPinCredential, Feature::kRfidCredential, Feature::kFingerCredentials, Feature::kFaceCredentials,
+                    Feature::kAliroProvisioning);
     }
 
-    inline bool SupportsCredentialsOTA(chip::EndpointId endpointId)
+    static inline bool SupportsCredentialsOTA(chip::EndpointId endpointId)
     {
-        return GetFeatures(endpointId).Has(DoorLockFeature::kCredentialsOverTheAirAccess);
+        return GetFeatures(endpointId).Has(Feature::kCredentialsOverTheAirAccess);
     }
 
-    inline bool SupportsUSR(chip::EndpointId endpointId)
+    static inline bool SupportsUSR(chip::EndpointId endpointId)
     {
         // appclusters, 5.2.2: USR feature has conformance [PIN | RID | FGP | FACE]
-        return GetFeatures(endpointId).Has(DoorLockFeature::kUser) && SupportsAnyCredential(endpointId);
+        return GetFeatures(endpointId).Has(Feature::kUser) && SupportsAnyCredential(endpointId);
+    }
+
+    static bool SupportsUnbolt(chip::EndpointId endpointId) { return GetFeatures(endpointId).Has(Feature::kUnbolt); }
+
+    /**
+     * @brief Checks if Aliro Provisioning feature is supported on the given endpoint
+     *
+     * @param endpointId endpointId ID of the endpoint which contains the lock.
+     */
+    static inline bool SupportsAliroProvisioning(chip::EndpointId endpointId)
+    {
+        return GetFeatures(endpointId).Has(Feature::kAliroProvisioning);
+    }
+
+    /**
+     * @brief Checks if Aliro BLE UWB feature is supported on the given endpoint
+     *
+     * @param endpointId endpointId ID of the endpoint which contains the lock.
+     */
+    static inline bool SupportsAliroBLEUWB(chip::EndpointId endpointId)
+    {
+        return GetFeatures(endpointId).Has(Feature::kAliroBLEUWB);
+    }
+
+    /**
+     * @brief Allows the application to register a custom callback which will be called after the default DoorLock
+     *        OnFabricRemoved implementation. At that point the door lock cluster has done any
+     *        spec-required clearing of state for fabric removal.
+     *
+     * @param callback callback to be registered
+     */
+    inline void SetOnFabricRemovedCustomCallback(OnFabricRemovedCustomCallback callback)
+    {
+        mOnFabricRemovedCustomCallback = callback;
     }
 
     bool OnFabricRemoved(chip::EndpointId endpointId, chip::FabricIndex fabricIndex);
@@ -200,6 +277,20 @@ public:
      * @param endpointId
      */
     void ResetWrongCodeEntryAttempts(chip::EndpointId endpointId);
+
+    /**
+     * @brief Handles a local lock operation error. This method allows handling a wrong attempt of providing
+     *        user credential entry that has been provided locally by the user. The method will emit the LockOperationEvent
+     *        to inform the controller that a local wrong attempt occurred, and also call HandleWrongEntry method to
+     *        increment wrong entry counter.
+     *
+     * @param endpointId
+     * @param opType Operation source to be registered in the LockOperationEvent.
+     * @param opSource source of the operation to be registered in the LockOperationEvent.
+     * @param userId Optional user id to be registered in the LockOperationEvent
+     */
+    void HandleLocalLockOperationError(chip::EndpointId endpointId, LockOperationTypeEnum opType, OperationSourceEnum opSource,
+                                       Nullable<uint16_t> userId);
 
 private:
     chip::FabricIndex getFabricIndex(const chip::app::CommandHandler * commandObj);
@@ -233,15 +324,17 @@ private:
     bool findUserIndexByCredential(chip::EndpointId endpointId, CredentialTypeEnum credentialType, chip::ByteSpan credentialData,
                                    uint16_t & userIndex, uint16_t & credentialIndex, EmberAfPluginDoorLockUserInfo & userInfo);
 
-    EmberAfStatus createUser(chip::EndpointId endpointId, chip::FabricIndex creatorFabricIdx, chip::NodeId sourceNodeId,
-                             uint16_t userIndex, const Nullable<chip::CharSpan> & userName, const Nullable<uint32_t> & userUniqueId,
-                             const Nullable<UserStatusEnum> & userStatus, const Nullable<UserTypeEnum> & userType,
-                             const Nullable<CredentialRuleEnum> & credentialRule,
-                             const Nullable<CredentialStruct> & credential = Nullable<CredentialStruct>());
-    EmberAfStatus modifyUser(chip::EndpointId endpointId, chip::FabricIndex modifierFabricIndex, chip::NodeId sourceNodeId,
-                             uint16_t userIndex, const Nullable<chip::CharSpan> & userName, const Nullable<uint32_t> & userUniqueId,
-                             const Nullable<UserStatusEnum> & userStatus, const Nullable<UserTypeEnum> & userType,
-                             const Nullable<CredentialRuleEnum> & credentialRule);
+    chip::Protocols::InteractionModel::ClusterStatusCode
+    createUser(chip::EndpointId endpointId, chip::FabricIndex creatorFabricIdx, chip::NodeId sourceNodeId, uint16_t userIndex,
+               const Nullable<chip::CharSpan> & userName, const Nullable<uint32_t> & userUniqueId,
+               const Nullable<UserStatusEnum> & userStatus, const Nullable<UserTypeEnum> & userType,
+               const Nullable<CredentialRuleEnum> & credentialRule,
+               const Nullable<CredentialStruct> & credential = Nullable<CredentialStruct>());
+    chip::Protocols::InteractionModel::Status
+    modifyUser(chip::EndpointId endpointId, chip::FabricIndex modifierFabricIndex, chip::NodeId sourceNodeId, uint16_t userIndex,
+               const Nullable<chip::CharSpan> & userName, const Nullable<uint32_t> & userUniqueId,
+               const Nullable<UserStatusEnum> & userStatus, const Nullable<UserTypeEnum> & userType,
+               const Nullable<CredentialRuleEnum> & credentialRule);
     chip::Protocols::InteractionModel::Status clearUser(chip::EndpointId endpointId, chip::FabricIndex modifierFabricId,
                                                         chip::NodeId sourceNodeId, uint16_t userIndex, bool sendUserChangeEvent);
     chip::Protocols::InteractionModel::Status clearUser(chip::EndpointId endpointId, chip::FabricIndex modifierFabricId,
@@ -267,6 +360,12 @@ private:
                               const EmberAfPluginDoorLockCredentialInfo & existingCredential, const chip::ByteSpan & credentialData,
                               Nullable<uint16_t> userIndex, const Nullable<UserStatusEnum> & userStatus,
                               Nullable<UserTypeEnum> userType, uint16_t & createdUserIndex);
+    /**
+     * countOccupiedCredentials counts the number of occupied credentials of the
+     * given type.  Returns false on application-side errors (i.e. if the count
+     * cannot be determined).
+     */
+    bool countOccupiedCredentials(chip::EndpointId endpointId, CredentialTypeEnum credentialType, size_t & occupiedCount);
     DlStatus modifyProgrammingPIN(chip::EndpointId endpointId, chip::FabricIndex modifierFabricIndex, chip::NodeId sourceNodeId,
                                   uint16_t credentialIndex, CredentialTypeEnum credentialType,
                                   const EmberAfPluginDoorLockCredentialInfo & existingCredential,
@@ -350,7 +449,8 @@ private:
                                            uint16_t credentialIndex);
 
     void sendGetCredentialResponse(chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
-                                   CredentialTypeEnum credentialType, uint16_t credentialIndex, uint16_t userIndexWithCredential,
+                                   CredentialTypeEnum credentialType, uint16_t credentialIndex,
+                                   chip::app::DataModel::Nullable<uint16_t> nextCredentialIndex, uint16_t userIndexWithCredential,
                                    EmberAfPluginDoorLockCredentialInfo * credentialInfo, bool credentialExists);
 
     void clearCredentialCommandHandler(chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
@@ -389,14 +489,28 @@ private:
     void clearHolidayScheduleCommandHandler(chip::app::CommandHandler * commandObj,
                                             const chip::app::ConcreteCommandPath & commandPath, uint8_t holidayIndex);
 
+    void setAliroReaderConfigCommandHandler(chip::app::CommandHandler * commandObj,
+                                            const chip::app::ConcreteCommandPath & commandPath, const chip::ByteSpan & signingKey,
+                                            const chip::ByteSpan & verificationKey, const chip::ByteSpan & groupIdentifier,
+                                            const Optional<chip::ByteSpan> & groupResolvingKey);
+    void clearAliroReaderConfigCommandHandler(chip::app::CommandHandler * commandObj,
+                                              const chip::app::ConcreteCommandPath & commandPath);
+
     bool RemoteOperationEnabled(chip::EndpointId endpointId) const;
 
     EmberAfDoorLockEndpointContext * getContext(chip::EndpointId endpointId);
 
     bool engageLockout(chip::EndpointId endpointId);
 
-    static CHIP_ERROR sendClusterResponse(chip::app::CommandHandler * commandObj,
-                                          const chip::app::ConcreteCommandPath & commandPath, EmberAfStatus status);
+    static void sendClusterResponse(chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
+                                    chip::Protocols::InteractionModel::ClusterStatusCode status);
+
+    /**
+     * Get the DoorLock::Delegate for the given endpoint, if any. Will return
+     * null if there is no door lock server initialized on that endpoint or if
+     * there is no delegate associated with the initialized server.
+     */
+    chip::app::Clusters::DoorLock::Delegate * GetDelegate(chip::EndpointId endpointId);
 
     /**
      * @brief Common handler for LockDoor, UnlockDoor, UnlockWithTimeout commands
@@ -421,8 +535,8 @@ private:
      * @param opSource      operation source (remote, keypad, auto, etc)
      * @param opErr         operation error code (if opSuccess == false)
      * @param userId        user id
-     * @param fabricIdx     fabric index
-     * @param nodeId        node id
+     * @param fabricIdx     fabric index responsible for operating the lock
+     * @param nodeId        node id responsible for operating the lock
      * @param credList      list of credentials used in lock operation (can be NULL if no credentials were used)
      * @param credListSize  size of credentials list (if 0, then no credentials were used)
      * @param opSuccess     flags if operation was successful or not
@@ -462,8 +576,8 @@ private:
      * @return false        if attribute reading failed (value is kept unchanged)
      */
     template <typename T>
-    bool GetAttribute(chip::EndpointId endpointId, chip::AttributeId attributeId,
-                      EmberAfStatus (*getFn)(chip::EndpointId endpointId, T * value), T & value) const;
+    static bool GetAttribute(chip::EndpointId endpointId, chip::AttributeId attributeId,
+                             chip::Protocols::InteractionModel::Status (*getFn)(chip::EndpointId endpointId, T * value), T & value);
 
     /**
      * @brief Set generic attribute value
@@ -478,7 +592,59 @@ private:
      */
     template <typename T>
     bool SetAttribute(chip::EndpointId endpointId, chip::AttributeId attributeId,
-                      EmberAfStatus (*setFn)(chip::EndpointId endpointId, T value), T value);
+                      chip::Protocols::InteractionModel::Status (*setFn)(chip::EndpointId endpointId, T value), T value);
+
+    // AttributeAccessInterface's Read API
+    CHIP_ERROR Read(const chip::app::ConcreteReadAttributePath & aPath, chip::app::AttributeValueEncoder & aEncoder) override;
+
+    /**
+     * @brief Reads AliroExpeditedTransactionSupportedProtocolVersions attribute for door lock
+     *
+     * @param aEncoder      attribute value encoder.
+     * @param delegate      door lock cluster delegate that will provide the value
+     *
+     * @return CHIP_NO_ERROR  on success
+     * @return CHIP_ERROR     if attribute read failed
+     */
+    CHIP_ERROR ReadAliroExpeditedTransactionSupportedProtocolVersions(chip::app::AttributeValueEncoder & aEncoder,
+                                                                      chip::app::Clusters::DoorLock::Delegate * delegate);
+
+    /**
+     * @brief Reads AliroSupportedBLEUWBProtocolVersions attribute for door lock
+     *
+     * @param aEncoder      attribute value encoder.
+     * @param delegate      door lock cluster delegate that will provide the value
+     *
+     * @return CHIP_NO_ERROR  on success
+     * @return CHIP_ERROR     if attribute read failed
+     */
+    CHIP_ERROR ReadAliroSupportedBLEUWBProtocolVersions(chip::app::AttributeValueEncoder & aEncoder,
+                                                        chip::app::Clusters::DoorLock::Delegate * delegate);
+
+    /**
+     * @brief Indicates whether an attribute can be nullable or not.
+     */
+    enum class AttributeNullabilityType : uint8_t
+    {
+        kNullable    = 0, /**< Indicates if an attribute is nullable */
+        kNotNullable = 1, /**< Indicates if an attribute is not nullable */
+    };
+
+    /**
+     * @brief Utility to read aliro attributes of type ByteSpan
+     *
+     * @param func          getter function for the attribute.
+     * @param data          buffer for the data.
+     * @param delegate      door lock cluster delegate that will provide the value
+     * @param aEncoder      attribute value encoder.
+     * @param nullabilityType enum value indicating whether the attribute is nullable or not.
+     *
+     * @return CHIP_NO_ERROR  on success
+     * @return CHIP_ERROR     if attribute read failed
+     */
+    CHIP_ERROR ReadAliroByteSpanAttribute(CHIP_ERROR (chip::app::Clusters::DoorLock::Delegate::*func)(chip::MutableByteSpan & data),
+                                          chip::MutableByteSpan & data, chip::app::Clusters::DoorLock::Delegate * delegate,
+                                          chip::app::AttributeValueEncoder & aEncoder, AttributeNullabilityType nullabilityType);
 
     friend bool
     emberAfDoorLockClusterLockDoorCallback(chip::app::CommandHandler * commandObj,
@@ -492,6 +658,10 @@ private:
     friend bool emberAfDoorLockClusterUnlockWithTimeoutCallback(
         chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
         const chip::app::Clusters::DoorLock::Commands::UnlockWithTimeout::DecodableType & commandData);
+
+    friend bool emberAfDoorLockClusterUnboltDoorCallback(
+        chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
+        const chip::app::Clusters::DoorLock::Commands::UnboltDoor::DecodableType & commandData);
 
     friend bool emberAfDoorLockClusterSetHolidayScheduleCallback(
         chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
@@ -556,7 +726,21 @@ private:
         chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
         const chip::app::Clusters::DoorLock::Commands::ClearYearDaySchedule::DecodableType & commandData);
 
-    std::array<EmberAfDoorLockEndpointContext, EMBER_AF_DOOR_LOCK_CLUSTER_SERVER_ENDPOINT_COUNT> mEndpointCtx;
+    friend bool emberAfDoorLockClusterSetAliroReaderConfigCallback(
+        chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
+        const chip::app::Clusters::DoorLock::Commands::SetAliroReaderConfig::DecodableType & commandData);
+
+    friend bool emberAfDoorLockClusterClearAliroReaderConfigCallback(
+        chip::app::CommandHandler * commandObj, const chip::app::ConcreteCommandPath & commandPath,
+        const chip::app::Clusters::DoorLock::Commands::ClearAliroReaderConfig::DecodableType & commandData);
+
+    static constexpr size_t kDoorLockClusterServerMaxEndpointCount =
+        MATTER_DM_DOOR_LOCK_CLUSTER_SERVER_ENDPOINT_COUNT + CHIP_DEVICE_CONFIG_DYNAMIC_ENDPOINT_COUNT;
+    static_assert(kDoorLockClusterServerMaxEndpointCount <= kEmberInvalidEndpointIndex, "DoorLock Endpoint count error");
+
+    std::array<EmberAfDoorLockEndpointContext, kDoorLockClusterServerMaxEndpointCount> mEndpointCtx;
+
+    OnFabricRemovedCustomCallback mOnFabricRemovedCustomCallback{ nullptr };
 
     static DoorLockServer instance;
 };
@@ -581,9 +765,9 @@ enum class DlAssetSource : uint8_t
  */
 struct EmberAfPluginDoorLockCredentialInfo
 {
-    DlCredentialStatus status;         /**< Indicates if credential slot is occupied or not. */
-    CredentialTypeEnum credentialType; /**< Specifies the type of the credential (PIN, RFID, etc.). */
-    chip::ByteSpan credentialData;     /**< Credential data bytes. */
+    DlCredentialStatus status = DlCredentialStatus::kAvailable; /**< Indicates if credential slot is occupied or not. */
+    CredentialTypeEnum credentialType;                          /**< Specifies the type of the credential (PIN, RFID, etc.). */
+    chip::ByteSpan credentialData;                              /**< Credential data bytes. */
 
     DlAssetSource creationSource;
     chip::FabricIndex createdBy; /**< Index of the fabric that created the user. */
@@ -891,26 +1075,48 @@ emberAfPluginDoorLockOnUnhandledAttributeChange(chip::EndpointId EndpointId, con
  * @brief User handler for LockDoor command (server)
  *
  * @param   endpointId      endpoint for which LockDoor command is called
+ * @param   fabricIdx       fabric index responsible for operating the lock
+ * @param   nodeId          node id responsible for operating the lock
  * @param   pinCode         PIN code (optional)
  * @param   err             error code if door locking failed (set only if retval==false)
  *
  * @retval true on success
  * @retval false if error happenned (err should be set to appropriate error code)
  */
-bool emberAfPluginDoorLockOnDoorLockCommand(chip::EndpointId endpointId, const Optional<chip::ByteSpan> & pinCode,
+bool emberAfPluginDoorLockOnDoorLockCommand(chip::EndpointId endpointId, const Nullable<chip::FabricIndex> & fabricIdx,
+                                            const Nullable<chip::NodeId> & nodeId, const Optional<chip::ByteSpan> & pinCode,
                                             OperationErrorEnum & err);
 
 /**
  * @brief User handler for UnlockDoor command (server)
  *
  * @param   endpointId      endpoint for which UnlockDoor command is called
+ * @param   fabricIdx       fabric index responsible for operating the lock
+ * @param   nodeId          node id responsible for operating the lock
  * @param   pinCode         PIN code (optional)
  * @param   err             error code if door unlocking failed (set only if retval==false)
  *
  * @retval true on success
  * @retval false if error happenned (err should be set to appropriate error code)
  */
-bool emberAfPluginDoorLockOnDoorUnlockCommand(chip::EndpointId endpointId, const Optional<chip::ByteSpan> & pinCode,
+bool emberAfPluginDoorLockOnDoorUnlockCommand(chip::EndpointId endpointId, const Nullable<chip::FabricIndex> & fabricIdx,
+                                              const Nullable<chip::NodeId> & nodeId, const Optional<chip::ByteSpan> & pinCode,
+                                              OperationErrorEnum & err);
+
+/**
+ * @brief User handler for UnboltDoor command (server)
+ *
+ * @param   endpointId      endpoint for which UnboltDoor command is called
+ * @param   fabricIdx       fabric index responsible for operating the lock
+ * @param   nodeId          node id responsible for operating the lock
+ * @param   pinCode         PIN code (optional)
+ * @param   err             error code if door unbolting failed (set only if retval==false)
+ *
+ * @retval true on success
+ * @retval false if error happenned (err should be set to appropriate error code)
+ */
+bool emberAfPluginDoorLockOnDoorUnboltCommand(chip::EndpointId endpointId, const Nullable<chip::FabricIndex> & fabricIdx,
+                                              const Nullable<chip::NodeId> & nodeId, const Optional<chip::ByteSpan> & pinCode,
                                               OperationErrorEnum & err);
 
 /**

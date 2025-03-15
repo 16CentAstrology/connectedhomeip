@@ -22,6 +22,7 @@
 #import <Security/Security.h>
 
 #import "MTRCertificates.h"
+#import "MTRConversion.h"
 #import "MTRDeviceController_Internal.h"
 #import "MTRLogging_Internal.h"
 #import "NSDataSpanConversion.h"
@@ -34,8 +35,6 @@
 #include <lib/core/Optional.h>
 #include <lib/core/TLV.h>
 #include <lib/support/PersistentStorageMacros.h>
-#include <lib/support/SafeInt.h>
-#include <lib/support/TimeUtils.h>
 #include <platform/LockTracker.h>
 
 using namespace chip;
@@ -43,19 +42,17 @@ using namespace TLV;
 using namespace Credentials;
 using namespace Crypto;
 
-MTROperationalCredentialsDelegate::MTROperationalCredentialsDelegate(MTRDeviceController * deviceController)
+MTROperationalCredentialsDelegate::MTROperationalCredentialsDelegate(MTRDeviceController_Concrete * deviceController)
     : mWeakController(deviceController)
 {
 }
 
-CHIP_ERROR MTROperationalCredentialsDelegate::Init(MTRPersistentStorageDelegateBridge * storage, ChipP256KeypairPtr nocSigner,
-    NSData * ipk, NSData * rootCert, NSData * _Nullable icaCert)
+CHIP_ERROR MTROperationalCredentialsDelegate::Init(
+    ChipP256KeypairPtr nocSigner, NSData * ipk, NSData * rootCert, NSData * _Nullable icaCert)
 {
-    if (storage == nil || ipk == nil || rootCert == nil) {
+    if (ipk == nil || rootCert == nil) {
         return CHIP_ERROR_INVALID_ARGUMENT;
     }
-
-    mStorage = storage;
 
     mIssuerKey = nocSigner;
 
@@ -67,17 +64,8 @@ CHIP_ERROR MTROperationalCredentialsDelegate::Init(MTRPersistentStorageDelegateB
 
     // Make copies of the certificates, just in case the API consumer
     // has them as MutableData.
-    mRootCert = [NSData dataWithData:rootCert];
-    if (mRootCert == nil) {
-        return CHIP_ERROR_NO_MEMORY;
-    }
-
-    if (icaCert != nil) {
-        mIntermediateCert = [NSData dataWithData:icaCert];
-        if (mIntermediateCert == nil) {
-            return CHIP_ERROR_NO_MEMORY;
-        }
-    }
+    mRootCert = [rootCert copy];
+    mIntermediateCert = [icaCert copy];
 
     return CHIP_NO_ERROR;
 }
@@ -89,21 +77,22 @@ CHIP_ERROR MTROperationalCredentialsDelegate::GenerateNOC(
         return CHIP_ERROR_INCORRECT_STATE;
     }
 
-    return GenerateNOC(
-        *mIssuerKey, (mIntermediateCert != nil) ? mIntermediateCert : mRootCert, nodeId, fabricId, cats, pubkey, noc);
+    auto * validityPeriod = [[NSDateInterval alloc] initWithStartDate:[NSDate now] endDate:[NSDate distantFuture]];
+    return GenerateNOC(*mIssuerKey, (mIntermediateCert != nil) ? mIntermediateCert : mRootCert, nodeId, fabricId, cats, pubkey,
+        validityPeriod, noc);
 }
 
 CHIP_ERROR MTROperationalCredentialsDelegate::GenerateNOC(P256Keypair & signingKeypair, NSData * signingCertificate, NodeId nodeId,
-    FabricId fabricId, const CATValues & cats, const P256PublicKey & pubkey, MutableByteSpan & noc)
+    FabricId fabricId, const CATValues & cats, const P256PublicKey & pubkey, NSDateInterval * validityPeriod, MutableByteSpan & noc)
 {
     uint32_t validityStart, validityEnd;
 
-    if (!ToChipEpochTime(0, validityStart)) {
+    if (!ToChipEpochTime(validityPeriod.startDate, validityStart)) {
         MTR_LOG_ERROR("Failed in computing certificate validity start date");
         return CHIP_ERROR_INTERNAL;
     }
 
-    if (!ToChipEpochTime(kCertificateValiditySecs, validityEnd)) {
+    if (!ToChipNotAfterEpochTime(validityPeriod.endDate, validityEnd)) {
         MTR_LOG_ERROR("Failed in computing certificate validity end date");
         return CHIP_ERROR_INTERNAL;
     }
@@ -140,33 +129,14 @@ CHIP_ERROR MTROperationalCredentialsDelegate::ExternalGenerateNOCChain(const chi
 
     VerifyOrReturnError(mCppCommissioner != nullptr, CHIP_ERROR_INCORRECT_STATE);
 
-    MTRDeviceController * strongController = mWeakController;
+    MTRDeviceController_Concrete * strongController = mWeakController;
     VerifyOrReturnError(strongController != nil, CHIP_ERROR_INCORRECT_STATE);
 
     mOnNOCCompletionCallback = onCompletion;
 
-    TLVReader reader;
-    reader.Init(csrElements);
-
-    if (reader.GetType() == kTLVType_NotSpecified) {
-        ReturnErrorOnFailure(reader.Next());
-    }
-
-    VerifyOrReturnError(reader.GetType() == kTLVType_Structure, CHIP_ERROR_WRONG_TLV_TYPE);
-    VerifyOrReturnError(reader.GetTag() == AnonymousTag(), CHIP_ERROR_UNEXPECTED_TLV_ELEMENT);
-
-    TLVType containerType;
-    ReturnErrorOnFailure(reader.EnterContainer(containerType));
-    ReturnErrorOnFailure(reader.Next(kTLVType_ByteString, TLV::ContextTag(1)));
-
-    chip::ByteSpan csr;
-    reader.Get(csr);
-    reader.ExitContainer(containerType);
-
-    auto * csrInfo = [[MTROperationalCSRInfo alloc] initWithCSR:AsData(csr)
-                                                       csrNonce:AsData(csrNonce)
-                                                 csrElementsTLV:AsData(csrElements)
-                                           attestationSignature:AsData(csrElementsSignature)];
+    auto * csrInfo = [[MTROperationalCSRInfo alloc] initWithCSRNonce:AsData(csrNonce)
+                                                      csrElementsTLV:AsData(csrElements)
+                                                attestationSignature:AsData(csrElementsSignature)];
 
     chip::ByteSpan certificationDeclarationSpan;
     chip::ByteSpan attestationNonceSpan;
@@ -198,14 +168,14 @@ CHIP_ERROR MTROperationalCredentialsDelegate::ExternalGenerateNOCChain(const chi
                          certificationDeclaration:AsData(certificationDeclarationSpan)
                                      firmwareInfo:firmwareInfo];
 
-    MTRDeviceController * __weak weakController = mWeakController;
+    MTRDeviceController_Concrete * __weak weakController = mWeakController;
     dispatch_async(mOperationalCertificateIssuerQueue, ^{
         [mOperationalCertificateIssuer
             issueOperationalCertificateForRequest:csrInfo
                                   attestationInfo:attestationInfo
                                        controller:strongController
                                        completion:^(MTROperationalCertificateChain * _Nullable chain, NSError * _Nullable error) {
-                                           MTRDeviceController * strongController = weakController;
+                                           MTRDeviceController_Concrete * strongController = weakController;
                                            if (strongController == nil || !strongController.isRunning) {
                                                // No longer safe to touch "this"
                                                return;
@@ -294,8 +264,7 @@ CHIP_ERROR MTROperationalCredentialsDelegate::LocalGenerateNOCChain(const chip::
         ReturnErrorOnFailure(reader.Next());
     }
 
-    VerifyOrReturnError(reader.GetType() == kTLVType_Structure, CHIP_ERROR_WRONG_TLV_TYPE);
-    VerifyOrReturnError(reader.GetTag() == AnonymousTag(), CHIP_ERROR_UNEXPECTED_TLV_ELEMENT);
+    ReturnErrorOnFailure(reader.Expect(kTLVType_Structure, AnonymousTag()));
 
     TLVType containerType;
     ReturnErrorOnFailure(reader.EnterContainer(containerType));
@@ -329,19 +298,28 @@ ByteSpan MTROperationalCredentialsDelegate::IntermediateCertSpan() const
     return AsByteSpan(mIntermediateCert);
 }
 
-bool MTROperationalCredentialsDelegate::ToChipEpochTime(uint32_t offset, uint32_t & epoch)
+bool MTROperationalCredentialsDelegate::ToChipNotAfterEpochTime(NSDate * date, uint32_t & epoch)
 {
-    NSDate * date = [NSDate dateWithTimeIntervalSinceNow:offset];
+    if ([date isEqualToDate:[NSDate distantFuture]]) {
+        epoch = kNullCertTime;
+        return true;
+    }
+
+    return ToChipEpochTime(date, epoch);
+}
+
+bool MTROperationalCredentialsDelegate::ToChipEpochTime(NSDate * date, uint32_t & epoch)
+{
+    if (DateToMatterEpochSeconds(date, epoch)) {
+        return true;
+    }
+
     NSCalendar * calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
     NSDateComponents * components = [calendar componentsInTimeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] fromDate:date];
-
-    uint16_t year = static_cast<uint16_t>([components year]);
-    uint8_t month = static_cast<uint8_t>([components month]);
-    uint8_t day = static_cast<uint8_t>([components day]);
-    uint8_t hour = static_cast<uint8_t>([components hour]);
-    uint8_t minute = static_cast<uint8_t>([components minute]);
-    uint8_t second = static_cast<uint8_t>([components second]);
-    return chip::CalendarToChipEpochTime(year, month, day, hour, minute, second, epoch);
+    MTR_LOG_ERROR(
+        "Year %lu is out of range for Matter epoch time.  Please use [NSDate distantFuture] to represent \"never expires\".",
+        static_cast<unsigned long>(components.year));
+    return false;
 }
 
 namespace {
@@ -356,7 +334,7 @@ uint64_t GetIssuerId(NSNumber * _Nullable providedIssuerId)
 } // anonymous namespace
 
 CHIP_ERROR MTROperationalCredentialsDelegate::GenerateRootCertificate(id<MTRKeypair> keypair, NSNumber * _Nullable issuerId,
-    NSNumber * _Nullable fabricId, NSData * _Nullable __autoreleasing * _Nonnull rootCert)
+    NSNumber * _Nullable fabricId, NSDateInterval * validityPeriod, NSData * _Nullable __autoreleasing * _Nonnull rootCert)
 {
     *rootCert = nil;
     MTRP256KeypairBridge keypairBridge;
@@ -373,12 +351,12 @@ CHIP_ERROR MTROperationalCredentialsDelegate::GenerateRootCertificate(id<MTRKeyp
 
     uint32_t validityStart, validityEnd;
 
-    if (!ToChipEpochTime(0, validityStart)) {
+    if (!ToChipEpochTime(validityPeriod.startDate, validityStart)) {
         MTR_LOG_ERROR("Failed in computing certificate validity start date");
         return CHIP_ERROR_INTERNAL;
     }
 
-    if (!ToChipEpochTime(kCertificateValiditySecs, validityEnd)) {
+    if (!ToChipNotAfterEpochTime(validityPeriod.endDate, validityEnd)) {
         MTR_LOG_ERROR("Failed in computing certificate validity end date");
         return CHIP_ERROR_INTERNAL;
     }
@@ -392,7 +370,7 @@ CHIP_ERROR MTROperationalCredentialsDelegate::GenerateRootCertificate(id<MTRKeyp
 }
 
 CHIP_ERROR MTROperationalCredentialsDelegate::GenerateIntermediateCertificate(id<MTRKeypair> rootKeypair, NSData * rootCertificate,
-    SecKeyRef intermediatePublicKey, NSNumber * _Nullable issuerId, NSNumber * _Nullable fabricId,
+    SecKeyRef intermediatePublicKey, NSNumber * _Nullable issuerId, NSNumber * _Nullable fabricId, NSDateInterval * validityPeriod,
     NSData * _Nullable __autoreleasing * _Nonnull intermediateCert)
 {
     *intermediateCert = nil;
@@ -423,12 +401,12 @@ CHIP_ERROR MTROperationalCredentialsDelegate::GenerateIntermediateCertificate(id
 
     uint32_t validityStart, validityEnd;
 
-    if (!ToChipEpochTime(0, validityStart)) {
+    if (!ToChipEpochTime(validityPeriod.startDate, validityStart)) {
         MTR_LOG_ERROR("Failed in computing certificate validity start date");
         return CHIP_ERROR_INTERNAL;
     }
 
-    if (!ToChipEpochTime(kCertificateValiditySecs, validityEnd)) {
+    if (!ToChipNotAfterEpochTime(validityPeriod.endDate, validityEnd)) {
         MTR_LOG_ERROR("Failed in computing certificate validity end date");
         return CHIP_ERROR_INTERNAL;
     }
@@ -443,7 +421,8 @@ CHIP_ERROR MTROperationalCredentialsDelegate::GenerateIntermediateCertificate(id
 
 CHIP_ERROR MTROperationalCredentialsDelegate::GenerateOperationalCertificate(id<MTRKeypair> signingKeypair,
     NSData * signingCertificate, SecKeyRef operationalPublicKey, NSNumber * fabricId, NSNumber * nodeId,
-    NSSet<NSNumber *> * _Nullable caseAuthenticatedTags, NSData * _Nullable __autoreleasing * _Nonnull operationalCert)
+    NSSet<NSNumber *> * _Nullable caseAuthenticatedTags, NSDateInterval * validityPeriod,
+    NSData * _Nullable __autoreleasing * _Nonnull operationalCert)
 {
     *operationalCert = nil;
 
@@ -470,15 +449,12 @@ CHIP_ERROR MTROperationalCredentialsDelegate::GenerateOperationalCertificate(id<
 
     CATValues cats;
     if (caseAuthenticatedTags != nil) {
-        size_t idx = 0;
-        for (NSNumber * cat in [caseAuthenticatedTags.allObjects sortedArrayUsingSelector:@selector(compare:)]) {
-            cats.values[idx++] = [cat unsignedIntValue];
-        }
+        ReturnErrorOnFailure(SetToCATValues(caseAuthenticatedTags, cats));
     }
 
     uint8_t nocBuffer[Controller::kMaxCHIPDERCertLength];
     MutableByteSpan noc(nocBuffer);
-    ReturnErrorOnFailure(GenerateNOC(keypairBridge, signingCertificate, node, fabric, cats, pubKey, noc));
+    ReturnErrorOnFailure(GenerateNOC(keypairBridge, signingCertificate, node, fabric, cats, pubKey, validityPeriod, noc));
 
     *operationalCert = AsData(noc);
     return CHIP_NO_ERROR;

@@ -1,31 +1,70 @@
 #!/usr/bin/env python
 
+import dataclasses
 import functools
 import logging
+from typing import Dict, Optional, Set
 
 from lark import Lark
+from lark.lexer import Token
 from lark.visitors import Transformer, v_args
 
 try:
-    from .matter_idl_types import (AccessPrivilege, Attribute, AttributeInstantiation, AttributeOperation, AttributeQuality,
-                                   AttributeStorage, Bitmap, Cluster, ClusterSide, Command, CommandQuality, ConstantEntry, DataType,
-                                   DeviceType, Endpoint, Enum, Event, EventPriority, EventQuality, Field, FieldQuality, Idl,
-                                   ParseMetaData, ServerClusterInstantiation, Struct, StructQuality, StructTag)
-except ImportError:
+    from matter_idl.matter_idl_types import AccessPrivilege
+except ModuleNotFoundError:
     import os
     import sys
-    sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+    sys.path.append(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
 
-    from matter_idl_types import (AccessPrivilege, Attribute, AttributeInstantiation, AttributeOperation, AttributeQuality,
-                                  AttributeStorage, Bitmap, Cluster, ClusterSide, Command, CommandQuality, ConstantEntry, DataType,
-                                  DeviceType, Endpoint, Enum, Event, EventPriority, EventQuality, Field, FieldQuality, Idl,
-                                  ParseMetaData, ServerClusterInstantiation, Struct, StructQuality, StructTag)
+    from matter_idl.matter_idl_types import AccessPrivilege
+
+from matter_idl.matter_idl_types import (ApiMaturity, Attribute, AttributeInstantiation, AttributeOperation, AttributeQuality,
+                                         AttributeStorage, Bitmap, Cluster, Command, CommandInstantiation, CommandQuality,
+                                         ConstantEntry, DataType, DeviceType, Endpoint, Enum, Event, EventPriority, EventQuality,
+                                         Field, FieldQuality, Idl, ParseMetaData, ServerClusterInstantiation, Struct, StructQuality,
+                                         StructTag)
 
 
 def UnionOfAllFlags(flags_list):
     if not flags_list:
         return None
     return functools.reduce(lambda a, b: a | b, flags_list)
+
+
+class PrefixCppDocComment:
+    def __init__(self, token):
+        self.start_pos = token.start_pos
+        # Assume CPP comments: /**...*/
+        self.value_len = len(token.value)  # includes /***/ AND whitespace
+        self.value = token.value[3:-2].strip()
+
+    def appply_to_idl(self, idl: Idl, content: str):
+        if self.start_pos is None:
+            return
+
+        actual_pos = self.start_pos + self.value_len
+        while content[actual_pos] in ' \t\n\r':
+            actual_pos += 1
+
+        # A doc comment will apply to any supported element assuming it immediately
+        # preceeds id (skipping whitespace)
+        for item in self.supported_types(idl):
+            meta = item.parse_meta
+            if meta and meta.start_pos == actual_pos:
+                item.description = self.value
+                return
+
+    def supported_types(self, idl: Idl):
+        """List all types supported by doc comments."""
+        for cluster in idl.clusters:
+            yield cluster
+
+            for command in cluster.commands:
+                yield command
+
+    def __repr__(self):
+        return ("PREFIXDoc: %r at %r" % (self.value, self.start_pos))
 
 
 class AddServerClusterToEndpointTransform:
@@ -86,11 +125,12 @@ class MatterIdlTransformer(Transformer):
       parsed input (as strings unless transformed) and interpret them.
 
       Actual parametes to the methods depend on the rules multiplicity and/or
-      optionality.
+      optionally.
     """
 
     def __init__(self, skip_meta):
         self.skip_meta = skip_meta
+        self.doc_comments = []
 
     def positive_integer(self, tokens):
         """Numbers in the grammar are integers or hex numbers.
@@ -118,6 +158,18 @@ class MatterIdlTransformer(Transformer):
     def bool_default_false(self, _):
         return False
 
+    def provisional_api_maturity(self, _):
+        return ApiMaturity.PROVISIONAL
+
+    def internal_api_maturity(self, _):
+        return ApiMaturity.INTERNAL
+
+    def deprecated_api_maturity(self, _):
+        return ApiMaturity.DEPRECATED
+
+    def stable_api_maturity(self, _):
+        return ApiMaturity.STABLE
+
     def id(self, tokens):
         """An id is a string containing an identifier
         """
@@ -142,8 +194,10 @@ class MatterIdlTransformer(Transformer):
             raise Exception("Unexpected size for data type")
 
     @v_args(inline=True)
-    def constant_entry(self, id, number):
-        return ConstantEntry(name=id, code=number)
+    def constant_entry(self, api_maturity, id, number):
+        if api_maturity is None:
+            api_maturity = ApiMaturity.STABLE
+        return ConstantEntry(name=id, code=number, api_maturity=api_maturity)
 
     @v_args(inline=True)
     def enum(self, id, type, *entries):
@@ -215,14 +269,10 @@ class MatterIdlTransformer(Transformer):
         # Last argument is the named_member, the rest
         # are qualities
         field = args[-1]
-        field.qualities = UnionOfAllFlags(args[:-1]) or FieldQuality.NONE
+        field.qualities = UnionOfAllFlags(args[1:-1]) or FieldQuality.NONE
+        if args[0] is not None:
+            field.api_maturity = args[0]
         return field
-
-    def server_cluster(self, _):
-        return ClusterSide.SERVER
-
-    def client_cluster(self, _):
-        return ClusterSide.CLIENT
 
     def command_access(self, privilege):
         return privilege[0]
@@ -239,17 +289,26 @@ class MatterIdlTransformer(Transformer):
 
         return init_args
 
-    def command(self, args):
+    # NOTE: awkward inline because the order of 'meta, children' vs 'children, meta' was flipped
+    #       between lark versions in https://github.com/lark-parser/lark/pull/993
+    @v_args(meta=True, inline=True)
+    def command(self, meta, *tuple_args):
         # The command takes 4 arguments if no input argument, 5 if input
         # argument is provided
+        args = list(tuple_args)  # convert from tuple
         if len(args) != 5:
             args.insert(2, None)
 
-        return Command(
+        meta = None if self.skip_meta else ParseMetaData(meta)
+
+        cmd = Command(
+            parse_meta=meta,
             qualities=args[0],
             input_param=args[2], output_param=args[3], code=args[4],
-            **args[1]
+            **args[1],
         )
+
+        return cmd
 
     def event_access(self, privilege):
         return privilege[0]
@@ -265,6 +324,10 @@ class MatterIdlTransformer(Transformer):
             init_args["readacl"] = args[0]
 
         return init_args
+
+    @v_args(inline=True)
+    def cluster_revision(self, revision):
+        return revision
 
     def event(self, args):
         return Event(qualities=args[0], priority=args[1], code=args[3], fields=args[4:], **args[2])
@@ -327,6 +390,11 @@ class MatterIdlTransformer(Transformer):
         return AttributeInstantiation(parse_meta=meta, name=id, storage=storage, default=default)
 
     @v_args(meta=True, inline=True)
+    def endpoint_command_instantiation(self, meta, id):
+        meta = None if self.skip_meta else ParseMetaData(meta)
+        return CommandInstantiation(parse_meta=meta, name=id)
+
+    @v_args(meta=True, inline=True)
     def endpoint_emitted_event(self, meta, id):
         meta = None if self.skip_meta else ParseMetaData(meta)
         return id
@@ -383,34 +451,50 @@ class MatterIdlTransformer(Transformer):
         meta = None if self.skip_meta else ParseMetaData(meta)
 
         attributes = []
+        commands = []
         events = set()
 
         for item in content:
             if isinstance(item, AttributeInstantiation):
                 attributes.append(item)
+            elif isinstance(item, CommandInstantiation):
+                commands.append(item)
             else:
                 events.add(item)
         return AddServerClusterToEndpointTransform(
-            ServerClusterInstantiation(parse_meta=meta, name=id, attributes=attributes, events_emitted=events))
+            ServerClusterInstantiation(parse_meta=meta, name=id, attributes=attributes, events_emitted=events, commands=commands))
+
+    @v_args(inline=True)
+    def cluster_content(self, api_maturity, element):
+        if api_maturity is not None:
+            element.api_maturity = api_maturity
+        return element
 
     @v_args(inline=True, meta=True)
-    def cluster(self, meta, side, name, code, *content):
+    def cluster(self, meta, api_maturity, name, code, revision, *content):
         meta = None if self.skip_meta else ParseMetaData(meta)
 
-        result = Cluster(parse_meta=meta, side=side, name=name, code=code)
+        if api_maturity is None:
+            api_maturity = ApiMaturity.STABLE
+
+        if not revision:
+            revision = 1
+
+        result = Cluster(parse_meta=meta, name=name, code=code,
+                         revision=revision, api_maturity=api_maturity)
 
         for item in content:
-            if type(item) == Enum:
+            if isinstance(item, Enum):
                 result.enums.append(item)
-            elif type(item) == Bitmap:
+            elif isinstance(item, Bitmap):
                 result.bitmaps.append(item)
-            elif type(item) == Event:
+            elif isinstance(item, Event):
                 result.events.append(item)
-            elif type(item) == Attribute:
+            elif isinstance(item, Attribute):
                 result.attributes.append(item)
-            elif type(item) == Struct:
+            elif isinstance(item, Struct):
                 result.structs.append(item)
-            elif type(item) == Command:
+            elif isinstance(item, Command):
                 result.commands.append(item)
             else:
                 raise Exception("UNKNOWN cluster content item: %r" % item)
@@ -418,47 +502,192 @@ class MatterIdlTransformer(Transformer):
         return result
 
     def idl(self, items):
-        idl = Idl()
+        clusters = []
+        endpoints = []
+
+        global_bitmaps = []
+        global_enums = []
+        global_structs = []
 
         for item in items:
-            if type(item) == Enum:
-                idl.enums.append(item)
-            elif type(item) == Struct:
-                idl.structs.append(item)
-            elif type(item) == Cluster:
-                idl.clusters.append(item)
-            elif type(item) == Endpoint:
-                idl.endpoints.append(item)
+            if isinstance(item, Cluster):
+                clusters.append(item)
+            elif isinstance(item, Endpoint):
+                endpoints.append(item)
+            elif isinstance(item, Enum):
+                global_enums.append(dataclasses.replace(item, is_global=True))
+            elif isinstance(item, Bitmap):
+                global_bitmaps.append(dataclasses.replace(item, is_global=True))
+            elif isinstance(item, Struct):
+                global_structs.append(dataclasses.replace(item, is_global=True))
             else:
                 raise Exception("UNKNOWN idl content item: %r" % item)
 
-        return idl
+        return Idl(clusters=clusters, endpoints=endpoints, global_bitmaps=global_bitmaps, global_enums=global_enums, global_structs=global_structs)
+
+    def prefix_doc_comment(self):
+        print("TODO: prefix")
+
+    # Processing of (potential-doc)-comments:
+    def c_comment(self, token: Token):
+        """Processes comments starting with "/*" """
+        if token.value.startswith("/**"):
+            self.doc_comments.append(PrefixCppDocComment(token))
+
+
+def _referenced_type_names(cluster: Cluster) -> Set[str]:
+    """
+    Return the names of all data types referenced by the given cluster.
+    """
+    types = set()
+    for s in cluster.structs:
+        for f in s.fields:
+            types.add(f.data_type.name)
+
+    for e in cluster.events:
+        for f in e.fields:
+            types.add(f.data_type.name)
+
+    for a in cluster.attributes:
+        types.add(a.definition.data_type.name)
+
+    return types
+
+
+class GlobalMapping:
+    """
+    Maintains global type mapping from an IDL
+    """
+
+    def __init__(self, idl: Idl):
+        self.bitmap_map = {b.name: b for b in idl.global_bitmaps}
+        self.enum_map = {e.name: e for e in idl.global_enums}
+        self.struct_map = {s.name: s for s in idl.global_structs}
+
+        self.global_types = set(self.bitmap_map.keys()).union(set(self.enum_map.keys())).union(set(self.struct_map.keys()))
+
+        # Spec does not enforce unique naming in bitmap/enum/struct, however in practice
+        # if we have both enum Foo and bitmap Foo for example, it would be impossible
+        # to disambiguate `attribute Foo foo = 1` for the actual type we want.
+        #
+        # As a result, we do not try to namespace this and just error out
+        if len(self.global_types) != len(self.bitmap_map) + len(self.enum_map) + len(self.struct_map):
+            raise ValueError("Global type names are not unique.")
+
+    def merge_global_types_into_cluster(self, cluster: Cluster) -> Cluster:
+        """
+        Merges all referenced global types (bitmaps/enums/structs) into the cluster types.
+        This happens recursively.
+        """
+        global_types_added = set()
+
+        changed = True
+        while changed:
+            changed = False
+            for type_name in _referenced_type_names(cluster):
+                if type_name not in self.global_types:
+                    continue  # not a global type name
+
+                if type_name in global_types_added:
+                    continue  # already added
+
+                # check if this is a global type
+                if type_name in self.bitmap_map:
+                    global_types_added.add(type_name)
+                    changed = True
+                    cluster.bitmaps.append(self.bitmap_map[type_name])
+                elif type_name in self.enum_map:
+                    global_types_added.add(type_name)
+                    changed = True
+                    cluster.enums.append(self.enum_map[type_name])
+                elif type_name in self.struct_map:
+                    global_types_added.add(type_name)
+                    changed = True
+                    cluster.structs.append(self.struct_map[type_name])
+
+        return cluster
+
+
+def _merge_global_types_into_clusters(idl: Idl) -> Idl:
+    """
+    Adds bitmaps/enums/structs from idl.global_* into clusters as long as
+    clusters reference those type names
+    """
+    mapping = GlobalMapping(idl)
+    return dataclasses.replace(idl, clusters=[mapping.merge_global_types_into_cluster(cluster) for cluster in idl.clusters])
 
 
 class ParserWithLines:
-    def __init__(self, parser, skip_meta: bool):
-        self.parser = parser
-        self.skip_meta = skip_meta
+    def __init__(self, skip_meta: bool, merge_globals: bool):
+        self.transformer = MatterIdlTransformer(skip_meta)
+        self.merge_globals = merge_globals
 
-    def parse(self, file, file_name: str = None):
-        idl = MatterIdlTransformer(self.skip_meta).transform(
-            self.parser.parse(file))
+        # NOTE: LALR parser is fast. While Earley could parse more ambigous grammars,
+        #       earley is much slower:
+        #    - 0.39s LALR parsing of all-clusters-app.matter
+        #    - 2.26s Earley parsing of the same thing.
+        # For this reason, every attempt should be made to make the grammar context free
+        self.parser = Lark.open(
+            'matter_grammar.lark', rel_to=__file__, start='idl', parser='lalr', propagate_positions=True,
+            maybe_placeholders=True,
+            # separate callbacks to ignore from regular parsing (no tokens)
+            # while still getting notified about them
+            lexer_callbacks={
+                'C_COMMENT': self.transformer.c_comment,
+            }
+        )
+
+    def parse(self, file: str, file_name: Optional[str] = None):
+        idl = self.transformer.transform(self.parser.parse(file))
         idl.parse_file_name = file_name
+
+        # ZAP may generate the same definition of clusters several times.
+        # Validate that if a cluster is defined, its definition is IDENTICAL
+        #
+        # TODO: this is not ideal and zap provides some iteration that seems
+        #       to not care about side: `all_user_clusters_irrespective_of_side`
+        #       however that one loses at least `description` and switches
+        #       ordering.
+        #
+        # As a result, for now allow multiple definitions IF AND ONLY IF identical
+        #
+        # A zap PR to allow us to not need this is:
+        #    https://github.com/project-chip/zap/pull/1216
+        clusters: Dict[int, Cluster] = {}
+        for c in idl.clusters:
+            if c.code in clusters:
+                if c != clusters[c.code]:
+                    raise Exception(
+                        f"Different cluster definition for {c.name}/{c.code}")
+            else:
+                clusters[c.code] = c
+        idl.clusters = [c for c in clusters.values()]
+
+        for comment in self.transformer.doc_comments:
+            comment.appply_to_idl(idl, file)
+
+        if self.merge_globals:
+            idl = _merge_global_types_into_clusters(idl)
+
         return idl
 
 
-def CreateParser(skip_meta: bool = False):
+def CreateParser(skip_meta: bool = False, merge_globals=True):
     """
     Generates a parser that will process a ".matter" file into a IDL
-    """
 
-    # NOTE: LALR parser is fast. While Earley could parse more ambigous grammars,
-    #       earley is much slower:
-    #    - 0.39s LALR parsing of all-clusters-app.matter
-    #    - 2.26s Earley parsing of the same thing.
-    # For this reason, every attempt should be made to make the grammar context free
-    return ParserWithLines(Lark.open(
-        'matter_grammar.lark', rel_to=__file__, start='idl', parser='lalr', propagate_positions=True), skip_meta)
+    Arguments:
+       skip_meta - do not add metadata (line position) for items. Metadata is
+                   useful for error reporting, however it does not work well
+                   for unit test comparisons
+
+       merge_globals - places global items (enums/bitmaps/structs) into any
+                       clusters that reference them, so that cluster types
+                       are self-sufficient. Useful as a backwards-compatible
+                       code generation if global definitions are not supported.
+
+    """
+    return ParserWithLines(skip_meta, merge_globals)
 
 
 if __name__ == '__main__':
@@ -467,7 +696,6 @@ if __name__ == '__main__':
     import pprint
 
     import click
-    import coloredlogs
 
     # Supported log levels, mapping string values required for argument
     # parsing into logging constants
@@ -482,12 +710,14 @@ if __name__ == '__main__':
     @click.option(
         '--log-level',
         default='INFO',
-        type=click.Choice(__LOG_LEVELS__.keys(), case_sensitive=False),
+        type=click.Choice(list(__LOG_LEVELS__.keys()), case_sensitive=False),
         help='Determines the verbosity of script output.')
     @click.argument('filename')
     def main(log_level, filename=None):
-        coloredlogs.install(level=__LOG_LEVELS__[
-                            log_level], fmt='%(asctime)s %(levelname)-7s %(message)s')
+        logging.basicConfig(
+            level=__LOG_LEVELS__[log_level],
+            format='%(asctime)s %(levelname)-7s %(message)s',
+        )
 
         logging.info("Starting to parse ...")
         data = CreateParser().parse(open(filename).read(), file_name=filename)

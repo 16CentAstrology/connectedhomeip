@@ -24,23 +24,15 @@
  *
  */
 
-#ifndef __STDC_FORMAT_MACROS
-#define __STDC_FORMAT_MACROS
-#endif
-
-#ifndef __STDC_LIMIT_MACROS
-#define __STDC_LIMIT_MACROS
-#endif
-
 #include <inttypes.h>
 #include <stdint.h>
 #include <string.h>
 
-#include <lib/core/CHIPError.h>
-#include <lib/support/ErrorStr.h>
-#include <lib/support/UnitTestRegistration.h>
+#include <pw_unit_test/framework.h>
 
-#include <nlunit-test.h>
+#include <lib/core/CHIPError.h>
+#include <lib/core/ErrorStr.h>
+#include <lib/core/StringBuilderAdapters.h>
 
 using namespace chip;
 
@@ -53,7 +45,7 @@ static const CHIP_ERROR kTestElements[] =
     CHIP_ERROR_CONNECTION_ABORTED,
     CHIP_ERROR_INCORRECT_STATE,
     CHIP_ERROR_MESSAGE_TOO_LONG,
-    CHIP_ERROR_UNSUPPORTED_EXCHANGE_VERSION,
+    CHIP_ERROR_RECURSION_DEPTH_LIMIT,
     CHIP_ERROR_TOO_MANY_UNSOLICITED_MESSAGE_HANDLERS,
     CHIP_ERROR_NO_UNSOLICITED_MESSAGE_HANDLER,
     CHIP_ERROR_NO_CONNECTION_HANDLER,
@@ -66,17 +58,19 @@ static const CHIP_ERROR kTestElements[] =
     CHIP_ERROR_UNKNOWN_KEY_TYPE,
     CHIP_ERROR_KEY_NOT_FOUND,
     CHIP_ERROR_WRONG_ENCRYPTION_TYPE,
+    CHIP_ERROR_INVALID_UTF8,
     CHIP_ERROR_INTEGRITY_CHECK_FAILED,
     CHIP_ERROR_INVALID_SIGNATURE,
+    CHIP_ERROR_INVALID_TLV_CHAR_STRING,
     CHIP_ERROR_UNSUPPORTED_SIGNATURE_TYPE,
     CHIP_ERROR_INVALID_MESSAGE_LENGTH,
     CHIP_ERROR_BUFFER_TOO_SMALL,
     CHIP_ERROR_DUPLICATE_KEY_ID,
     CHIP_ERROR_WRONG_KEY_TYPE,
-    CHIP_ERROR_WELL_UNINITIALIZED,
-    CHIP_ERROR_WELL_EMPTY,
+    CHIP_ERROR_UNINITIALIZED,
     CHIP_ERROR_INVALID_STRING_LENGTH,
     CHIP_ERROR_INVALID_LIST_LENGTH,
+    CHIP_ERROR_FAILED_DEVICE_ATTESTATION,
     CHIP_END_OF_TLV,
     CHIP_ERROR_TLV_UNDERRUN,
     CHIP_ERROR_INVALID_TLV_ELEMENT,
@@ -132,6 +126,7 @@ static const CHIP_ERROR kTestElements[] =
     CHIP_ERROR_INSUFFICIENT_PRIVILEGE,
     CHIP_ERROR_MESSAGE_COUNTER_EXHAUSTED,
     CHIP_ERROR_FABRIC_EXISTS,
+    CHIP_ERROR_ENDPOINT_EXISTS,
     CHIP_ERROR_WRONG_ENCRYPTION_TYPE_FROM_PEER,
     CHIP_ERROR_INVALID_KEY_ID,
     CHIP_ERROR_INVALID_TIME,
@@ -145,6 +140,7 @@ static const CHIP_ERROR kTestElements[] =
     CHIP_ERROR_ACCESS_DENIED,
     CHIP_ERROR_UNKNOWN_RESOURCE_ID,
     CHIP_ERROR_VERSION_MISMATCH,
+    CHIP_ERROR_ACCESS_RESTRICTED_BY_ARL,
     CHIP_EVENT_ID_FOUND,
     CHIP_ERROR_INTERNAL,
     CHIP_ERROR_OPEN_FAILED,
@@ -170,10 +166,36 @@ static const CHIP_ERROR kTestElements[] =
     CHIP_ERROR_INVALID_FILE_IDENTIFIER,
     CHIP_ERROR_BUSY,
     CHIP_ERROR_HANDLER_NOT_SET,
+    CHIP_ERROR_IN_PROGRESS,
 };
 // clang-format on
 
-static void CheckCoreErrorStr(nlTestSuite * inSuite, void * inContext)
+void CheckCoreErrorStrHelper(const char * errStr, CHIP_ERROR err)
+{
+    char expectedText[9];
+
+    // Assert that the error string contains the error number in hex.
+    snprintf(expectedText, sizeof(expectedText), "%08" PRIX32, static_cast<uint32_t>(err.AsInteger()));
+    EXPECT_TRUE((strstr(errStr, expectedText) != nullptr));
+
+#if !CHIP_CONFIG_SHORT_ERROR_STR
+    // Assert that the error string contains a description, which is signaled
+    // by a presence of a colon proceeding the description.
+    EXPECT_TRUE((strchr(errStr, ':') != nullptr));
+#endif // !CHIP_CONFIG_SHORT_ERROR_STR
+
+#if CHIP_CONFIG_ERROR_SOURCE
+    // GetFile() should be relative to ${chip_root}
+    char const * const file = err.GetFile();
+    ASSERT_NE(file, nullptr);
+    EXPECT_EQ(strstr(file, "src/lib/core/"), file);
+
+    // File should be included in the error.
+    EXPECT_NE(strstr(errStr, file), nullptr);
+#endif // CHIP_CONFIG_ERROR_SOURCE
+}
+
+TEST(TestCHIPErrorStr, CheckCoreErrorStr)
 {
     // Register the layer error formatter
 
@@ -182,50 +204,85 @@ static void CheckCoreErrorStr(nlTestSuite * inSuite, void * inContext)
     // For each defined error...
     for (const auto & err : kTestElements)
     {
-        const char * errStr = ErrorStr(err);
-        char expectedText[9];
+        // ErrorStr with static char array.
+        CheckCoreErrorStrHelper(ErrorStr(err, /*withSourceLocation=*/true), err);
+    }
 
-        // Assert that the error string contains the error number in hex.
-        snprintf(expectedText, sizeof(expectedText), "%08" PRIX32, static_cast<uint32_t>(err.AsInteger()));
-        NL_TEST_ASSERT(inSuite, (strstr(errStr, expectedText) != nullptr));
+    // Deregister the layer error formatter
+    DeregisterCHIPLayerErrorFormatter();
+}
+
+TEST(TestCHIPErrorStr, CheckCoreErrorStrStorage)
+{
+    // Register the layer error formatter
+
+    RegisterCHIPLayerErrorFormatter();
+
+    // For each defined error...
+    for (const auto & err : kTestElements)
+    {
+        // ErrorStr with given storage.
+        ErrorStrStorage storage;
+        CheckCoreErrorStrHelper(ErrorStr(err, /*withSourceLocation=*/true, storage), err);
+    }
+
+    // Deregister the layer error formatter
+    DeregisterCHIPLayerErrorFormatter();
+}
+
+void CheckCoreErrorStrWithoutSourceLocationHelper(const char * errStr, CHIP_ERROR err)
+{
+    char expectedText[9];
+
+    // Assert that the error string contains the error number in hex.
+    snprintf(expectedText, sizeof(expectedText), "%08" PRIX32, static_cast<uint32_t>(err.AsInteger()));
+    EXPECT_TRUE((strstr(errStr, expectedText) != nullptr));
 
 #if !CHIP_CONFIG_SHORT_ERROR_STR
-        // Assert that the error string contains a description, which is signaled
-        // by a presence of a colon proceeding the description.
-        NL_TEST_ASSERT(inSuite, (strchr(errStr, ':') != nullptr));
+    // Assert that the error string contains a description, which is signaled
+    // by a presence of a colon proceeding the description.
+    EXPECT_TRUE((strchr(errStr, ':') != nullptr));
 #endif // !CHIP_CONFIG_SHORT_ERROR_STR
+
+#if CHIP_CONFIG_ERROR_SOURCE
+    char const * const file = err.GetFile();
+    ASSERT_NE(file, nullptr);
+    // File should not be included in the error.
+    EXPECT_EQ(strstr(errStr, file), nullptr);
+#endif // CHIP_CONFIG_ERROR_SOURCE
+}
+
+TEST(TestCHIPErrorStr, CheckCoreErrorStrWithoutSourceLocation)
+{
+    // Register the layer error formatter
+
+    RegisterCHIPLayerErrorFormatter();
+
+    // For each defined error...
+    for (const auto & err : kTestElements)
+    {
+        // ErrorStr with static char array.
+        CheckCoreErrorStrWithoutSourceLocationHelper(ErrorStr(err, /*withSourceLocation=*/false), err);
     }
+
+    // Deregister the layer error formatter
+    DeregisterCHIPLayerErrorFormatter();
 }
 
-/**
- *   Test Suite. It lists all the test functions.
- */
-
-// clang-format off
-static const nlTest sTests[] =
+TEST(TestCHIPErrorStr, CheckCoreErrorStrStorageWithoutSourceLocation)
 {
-    NL_TEST_DEF("CoreErrorStr", CheckCoreErrorStr),
+    // Register the layer error formatter
 
-    NL_TEST_SENTINEL()
-};
-// clang-format on
+    RegisterCHIPLayerErrorFormatter();
 
-int TestCHIPErrorStr()
-{
-    // clang-format off
-    nlTestSuite theSuite =
-	{
-        "Core-Error-Strings",
-        &sTests[0],
-        nullptr,
-        nullptr
-    };
-    // clang-format on
+    // For each defined error...
+    for (const auto & err : kTestElements)
+    {
+        // ErrorStr with given storage.
+        ErrorStrStorage storage;
+        CheckCoreErrorStrWithoutSourceLocationHelper(ErrorStr(err, /*withSourceLocation=*/false, storage), err);
+    }
 
-    // Run test suit againt one context.
-    nlTestRunner(&theSuite, nullptr);
-
-    return nlTestRunnerStats(&theSuite);
+    // Deregister the layer error formatter
+    DeregisterCHIPLayerErrorFormatter();
 }
-
-CHIP_REGISTER_TEST_SUITE(TestCHIPErrorStr)

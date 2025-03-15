@@ -42,6 +42,8 @@
 #include <platform/NetworkCommissioning.h>
 #include <platform/nxp/mw320/NetworkCommissioningDriver.h>
 
+#include <string>
+
 namespace chip {
 namespace DeviceLayer {
 
@@ -84,7 +86,7 @@ public:
 
 #if CHIP_DEVICE_CONFIG_ENABLE_WPA
     void StartWiFiManagement();
-    CHIP_ERROR GetWiFiBssId(ByteSpan & value);
+    CHIP_ERROR GetWiFiBssId(MutableByteSpan & value);
     CHIP_ERROR GetWiFiSecurityType(app::Clusters::WiFiNetworkDiagnostics::SecurityTypeEnum & securityType);
     CHIP_ERROR GetWiFiVersion(app::Clusters::WiFiNetworkDiagnostics::WiFiVersionEnum & wiFiVersion);
 #endif

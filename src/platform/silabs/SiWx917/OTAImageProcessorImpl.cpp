@@ -16,27 +16,53 @@
  *    limitations under the License.
  */
 
-#include "OTAImageProcessorImpl.h"
 #include <app/clusters/ota-requestor/OTADownloader.h>
 #include <app/clusters/ota-requestor/OTARequestorInterface.h>
-
-extern "C" {
-#include "btl_interface.h"
-#include "em_bus.h" // For CORE_CRITICAL_SECTION
-}
-
+#include <platform/silabs/OTAImageProcessorImpl.h>
 #include <platform/silabs/SilabsConfig.h>
+#include <platform/silabs/platformAbstraction/SilabsPlatform.h>
+#include <platform/silabs/wifi/WifiInterface.h>
 
-/// No error, operation OK
-#define SL_BOOTLOADER_OK 0L
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+#include <platform/silabs/wifi/icd/WifiSleepManager.h>
+#endif // CHIP_CONFIG_ENABLE_ICD_SERVER
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "sl_si91x_driver.h"
+#ifdef SLI_SI91X_MCU_INTERFACE
+#include "sl_si91x_hal_soc_soft_reset.h"
+#endif
+#ifdef __cplusplus
+}
+#endif
+
+#define RPS_HEADER 1
+#define RPS_DATA 2
+
+uint8_t flag = RPS_HEADER;
+static chip::OTAImageProcessorImpl gImageProcessor;
+
+using namespace chip::DeviceLayer::Silabs;
 
 namespace chip {
 
 // Define static memebers
+bool OTAImageProcessorImpl::mReset                                                      = false;
 uint8_t OTAImageProcessorImpl::mSlotId                                                  = 0;
 uint32_t OTAImageProcessorImpl::mWriteOffset                                            = 0;
 uint16_t OTAImageProcessorImpl::writeBufOffset                                          = 0;
 uint8_t OTAImageProcessorImpl::writeBuffer[kAlignmentBytes] __attribute__((aligned(4))) = { 0 };
+
+CHIP_ERROR OTAImageProcessorImpl::Init(OTADownloader * downloader)
+{
+    VerifyOrReturnError(downloader != nullptr, CHIP_ERROR_INVALID_ARGUMENT);
+
+    gImageProcessor.SetOTADownloader(downloader);
+
+    return CHIP_NO_ERROR;
+}
 
 CHIP_ERROR OTAImageProcessorImpl::PrepareDownload()
 {
@@ -113,7 +139,7 @@ CHIP_ERROR OTAImageProcessorImpl::ConfirmCurrentImage()
 
 void OTAImageProcessorImpl::HandlePrepareDownload(intptr_t context)
 {
-    int32_t err           = SL_BOOTLOADER_OK;
+    int32_t status        = SL_STATUS_OK;
     auto * imageProcessor = reinterpret_cast<OTAImageProcessorImpl *>(context);
 
     if (imageProcessor == nullptr)
@@ -129,7 +155,7 @@ void OTAImageProcessorImpl::HandlePrepareDownload(intptr_t context)
 
     ChipLogProgress(SoftwareUpdate, "HandlePrepareDownload");
 
-    CORE_CRITICAL_SECTION(bootloader_init();)
+    mReset                                  = false;
     mSlotId                                 = 0; // Single slot until we support multiple images
     writeBufOffset                          = 0;
     mWriteOffset                            = 0;
@@ -137,73 +163,77 @@ void OTAImageProcessorImpl::HandlePrepareDownload(intptr_t context)
 
     imageProcessor->mHeaderParser.Init();
 
-    // Not calling bootloader_eraseStorageSlot(mSlotId) here because we erase during each write
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+    // Setting the device in high performance - no-sleep mode during OTA tranfer
+    DeviceLayer::Silabs::WifiSleepManager::GetInstance().RequestHighPerformance();
+#endif /* CHIP_CONFIG_ENABLE_ICD_SERVER*/
 
-    imageProcessor->mDownloader->OnPreparedForDownload(err == SL_BOOTLOADER_OK ? CHIP_NO_ERROR : CHIP_ERROR_INTERNAL);
+    imageProcessor->mDownloader->OnPreparedForDownload(CHIP_NO_ERROR);
 }
 
 void OTAImageProcessorImpl::HandleFinalize(intptr_t context)
 {
-    uint32_t err          = SL_BOOTLOADER_OK;
+    int32_t status        = SL_STATUS_OK;
     auto * imageProcessor = reinterpret_cast<OTAImageProcessorImpl *>(context);
     if (imageProcessor == nullptr)
     {
         return;
     }
-
-    // Pad the remainder of the write buffer with zeros and write it to bootloader storage
     if (writeBufOffset != 0)
     {
         // Account for last bytes of the image not yet written to storage
         imageProcessor->mParams.downloadedBytes += writeBufOffset;
+        status = sl_si91x_fwup_load(writeBuffer, writeBufOffset);
+        ChipLogProgress(SoftwareUpdate, "status: 0x%lX", status);
 
-        while (writeBufOffset != kAlignmentBytes)
+        if (status != SL_STATUS_OK)
         {
-            writeBuffer[writeBufOffset] = 0;
-            writeBufOffset++;
-        }
-
-        CORE_CRITICAL_SECTION(err = bootloader_eraseWriteStorage(mSlotId, mWriteOffset, writeBuffer, kAlignmentBytes);)
-        if (err)
-        {
-            ChipLogError(SoftwareUpdate, "ERROR: In HandleFinalize bootloader_eraseWriteStorage() error %ld", err);
-            imageProcessor->mDownloader->EndDownload(CHIP_ERROR_WRITE_FAILED);
-            return;
+            if (status == SL_STATUS_SI91X_FW_UPDATE_DONE)
+            {
+                mReset = true;
+            }
+            else
+            {
+                ChipLogError(SoftwareUpdate, "ERROR: In HandleFinalize for last chunk sl_si91x_fwup_load() error 0x%lx", status);
+                imageProcessor->mDownloader->EndDownload(CHIP_ERROR_WRITE_FAILED);
+                return;
+            }
         }
     }
-
     imageProcessor->ReleaseBlock();
+
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+    // Setting the device back to power save mode when transfer is completed successfully
+    DeviceLayer::Silabs::WifiSleepManager::GetInstance().RemoveHighPerformanceRequest();
+#endif /* CHIP_CONFIG_ENABLE_ICD_SERVER*/
 
     ChipLogProgress(SoftwareUpdate, "OTA image downloaded successfully");
 }
 
 void OTAImageProcessorImpl::HandleApply(intptr_t context)
 {
-    uint32_t err = SL_BOOTLOADER_OK;
+    int32_t status = SL_STATUS_OK;
 
     ChipLogProgress(SoftwareUpdate, "OTAImageProcessorImpl::HandleApply()");
 
     // Force KVS to store pending keys such as data from StoreCurrentUpdateInfo()
     chip::DeviceLayer::PersistedStorage::KeyValueStoreMgrImpl().ForceKeyMapSave();
 
-    CORE_CRITICAL_SECTION(err = bootloader_verifyImage(mSlotId, NULL);)
-    if (err != SL_BOOTLOADER_OK)
+    ChipLogProgress(SoftwareUpdate, "OTA image downloaded successfully in HandleApply");
+
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+    // Setting the device is in high performace - no-sleepy mode before soft reset as soft reset is not happening in sleep mode
+    DeviceLayer::Silabs::WifiSleepManager::GetInstance().RequestHighPerformance();
+#endif /* CHIP_CONFIG_ENABLE_ICD_SERVER*/
+
+    if (mReset)
     {
-        ChipLogError(SoftwareUpdate, "ERROR: bootloader_verifyImage() error %ld", err);
-
-        return;
+        ChipLogProgress(SoftwareUpdate, "M4 Firmware update complete");
+        // send system reset request to reset the MCU and upgrade the m4 image
+        ChipLogProgress(SoftwareUpdate, "SoC Soft Reset initiated!");
+        // Reboots the device
+        GetPlatform().SoftwareReset();
     }
-
-    CORE_CRITICAL_SECTION(err = bootloader_setImageToBootload(mSlotId);)
-    if (err != SL_BOOTLOADER_OK)
-    {
-        ChipLogError(SoftwareUpdate, "ERROR: bootloader_setImageToBootload() error %ld", err);
-
-        return;
-    }
-
-    // This reboots the device
-    CORE_CRITICAL_SECTION(bootloader_rebootAndInstall();)
 }
 
 void OTAImageProcessorImpl::HandleAbort(intptr_t context)
@@ -214,13 +244,19 @@ void OTAImageProcessorImpl::HandleAbort(intptr_t context)
         return;
     }
 
+#if CHIP_CONFIG_ENABLE_ICD_SERVER
+    // Setting the device back to power save mode when transfer is aborted in the middle
+    DeviceLayer::Silabs::WifiSleepManager::GetInstance().RemoveHighPerformanceRequest();
+#endif /* CHIP_CONFIG_ENABLE_ICD_SERVER*/
+
     // Not clearing the image storage area as it is done during each write
     imageProcessor->ReleaseBlock();
 }
 
 void OTAImageProcessorImpl::HandleProcessBlock(intptr_t context)
 {
-    uint32_t err          = SL_BOOTLOADER_OK;
+    int32_t status        = SL_STATUS_OK;
+    int32_t content_block = 0;
     auto * imageProcessor = reinterpret_cast<OTAImageProcessorImpl *>(context);
     if (imageProcessor == nullptr)
     {
@@ -254,19 +290,37 @@ void OTAImageProcessorImpl::HandleProcessBlock(intptr_t context)
         if (writeBufOffset == kAlignmentBytes)
         {
             writeBufOffset = 0;
-
-            CORE_CRITICAL_SECTION(err = bootloader_eraseWriteStorage(mSlotId, mWriteOffset, writeBuffer, kAlignmentBytes);)
-            if (err)
+            if (flag == RPS_HEADER)
             {
-                ChipLogError(SoftwareUpdate, "ERROR: In HandleProcessBlock bootloader_eraseWriteStorage() error %ld", err);
-                imageProcessor->mDownloader->EndDownload(CHIP_ERROR_WRITE_FAILED);
-                return;
+                // Send RPS header which is received as first chunk
+                status = sl_si91x_fwup_start(writeBuffer);
+                status = sl_si91x_fwup_load(writeBuffer, kAlignmentBytes);
+                flag   = RPS_DATA;
             }
-            mWriteOffset += kAlignmentBytes;
+            else if (flag == RPS_DATA)
+            {
+                // Send RPS content
+                status = sl_si91x_fwup_load(writeBuffer, kAlignmentBytes);
+                if (status != SL_STATUS_OK)
+                {
+                    // If the last chunk of last block-writeBufOffset length is exactly kAlignmentBytes(64) bytes then mReset value
+                    // should be set to true in HandleProcessBlock
+                    if (status == SL_STATUS_SI91X_FW_UPDATE_DONE)
+                    {
+                        mReset = true;
+                    }
+                    else
+                    {
+                        ChipLogError(SoftwareUpdate, "ERROR: In HandleProcessBlock sl_si91x_fwup_load() error 0x%lx", status);
+                        imageProcessor->mDownloader->EndDownload(CHIP_ERROR_WRITE_FAILED);
+                        return;
+                    }
+                }
+            }
+            //     ChipLogProgress(SoftwareUpdate, "HandleProcessBlock status: 0x%lX", status);
             imageProcessor->mParams.downloadedBytes += kAlignmentBytes;
         }
     }
-
     imageProcessor->mDownloader->FetchNextData();
 }
 
@@ -278,7 +332,7 @@ CHIP_ERROR OTAImageProcessorImpl::ProcessHeader(ByteSpan & block)
         CHIP_ERROR error = mHeaderParser.AccumulateAndDecode(block, header);
 
         // Needs more data to decode the header
-        ReturnErrorCodeIf(error == CHIP_ERROR_BUFFER_TOO_SMALL, CHIP_NO_ERROR);
+        VerifyOrReturnError(error != CHIP_ERROR_BUFFER_TOO_SMALL, CHIP_NO_ERROR);
         ReturnErrorOnFailure(error);
 
         // SL TODO -- store version somewhere
@@ -330,6 +384,11 @@ CHIP_ERROR OTAImageProcessorImpl::ReleaseBlock()
 
     mBlock = MutableByteSpan();
     return CHIP_NO_ERROR;
+}
+
+OTAImageProcessorImpl & OTAImageProcessorImpl::GetDefaultInstance()
+{
+    return gImageProcessor;
 }
 
 } // namespace chip

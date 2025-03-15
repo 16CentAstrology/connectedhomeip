@@ -18,9 +18,29 @@
 package com.matter.controller.commands.pairing
 
 import chip.devicecontroller.ChipDeviceController
+import chip.devicecontroller.CommissionParameters
 import com.matter.controller.commands.common.CredentialsIssuer
 
 class PairCodeWifiCommand(controller: ChipDeviceController, credsIssue: CredentialsIssuer?) :
-  PairingCommand(controller, "code-wifi", credsIssue, PairingModeType.CODE, PairingNetworkType.WIFI) {
-  override fun runCommand() {}
+  PairingCommand(
+    controller,
+    "code-wifi",
+    credsIssue,
+    PairingModeType.CODE,
+    PairingNetworkType.WIFI
+  ) {
+  override fun runCommand() {
+    val commissionParams =
+      CommissionParameters.Builder().setNetworkCredentials(getWifiNetworkCredentials()).build()
+    currentCommissioner()
+      .pairDeviceWithCode(
+        getNodeId(),
+        getOnboardingPayload(),
+        getDiscoverOnce(),
+        getUseOnlyOnNetworkDiscovery(),
+        commissionParams
+      )
+    currentCommissioner().setCompletionListener(this)
+    waitCompleteMs(getTimeoutMillis())
+  }
 }

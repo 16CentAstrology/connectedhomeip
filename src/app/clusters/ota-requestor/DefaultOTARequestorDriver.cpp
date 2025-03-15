@@ -38,6 +38,8 @@
 #include "DefaultOTARequestorDriver.h"
 #include "OTARequestorInterface.h"
 
+#include <app/AppConfig.h>
+
 namespace chip {
 namespace DeviceLayer {
 namespace {
@@ -49,7 +51,7 @@ constexpr uint8_t kMaxInvalidSessionRetries        = 1;  // Max # of query image
 constexpr uint32_t kDelayQueryUponCommissioningSec = 30; // Delay before sending the initial image query after commissioning
 constexpr uint32_t kImmediateStartDelaySec         = 1;  // Delay before sending a query in response to UrgentUpdateAvailable
 
-#ifdef NON_SPEC_COMPLIANT_OTA_ACTION_DELAY_FLOOR
+#if NON_SPEC_COMPLIANT_OTA_ACTION_DELAY_FLOOR >= 0
 constexpr System::Clock::Seconds32 kDefaultDelayedActionTime = System::Clock::Seconds32(NON_SPEC_COMPLIANT_OTA_ACTION_DELAY_FLOOR);
 #else
 constexpr System::Clock::Seconds32 kDefaultDelayedActionTime = System::Clock::Seconds32(120);
@@ -192,7 +194,11 @@ void DefaultOTARequestorDriver::ApplyTimerHandler(System::Layer * systemLayer, v
     DefaultOTARequestorDriver * driver = ToDriver(appState);
 
     VerifyOrDie(driver->mImageProcessor != nullptr);
-    driver->mImageProcessor->Apply();
+
+    if (driver->mImageProcessor->Apply() != CHIP_NO_ERROR)
+    {
+        driver->mRequestor->CancelImageUpdate();
+    }
 }
 
 void DefaultOTARequestorDriver::UpdateAvailable(const UpdateDescription & update, System::Clock::Seconds32 delay)
@@ -213,17 +219,17 @@ CHIP_ERROR DefaultOTARequestorDriver::UpdateNotFound(UpdateNotFoundReason reason
     case UpdateNotFoundReason::kUpToDate:
         break;
     case UpdateNotFoundReason::kBusy: {
-        status = ScheduleQueryRetry(true, chip::max(kDefaultDelayedActionTime, delay));
+        status = ScheduleQueryRetry(true, std::max(kDefaultDelayedActionTime, delay));
         if (status == CHIP_ERROR_MAX_RETRY_EXCEEDED)
         {
             // If max retry exceeded with current provider, try a different provider
-            status = ScheduleQueryRetry(false, chip::max(kDefaultDelayedActionTime, delay));
+            status = ScheduleQueryRetry(false, std::max(kDefaultDelayedActionTime, delay));
         }
         break;
     }
     case UpdateNotFoundReason::kNotAvailable: {
         // Schedule a query only if a different provider is available
-        status = ScheduleQueryRetry(false, chip::max(kDefaultDelayedActionTime, delay));
+        status = ScheduleQueryRetry(false, std::max(kDefaultDelayedActionTime, delay));
         break;
     }
     }

@@ -25,11 +25,13 @@
 #include <platform/CHIPDeviceLayer.h>
 #include <system/SystemError.h>
 
-#if CONFIG_CHIP_CERTIFICATION_DECLARATION_STORAGE
+#ifdef CONFIG_CHIP_CERTIFICATION_DECLARATION_STORAGE
 #include <credentials/CertificationDeclaration.h>
 #include <platform/Zephyr/ZephyrConfig.h>
 #include <zephyr/settings/settings.h>
 #endif
+
+#include "DFUSync.h"
 
 #include <dfu/dfu_multi_image.h>
 #include <dfu/dfu_target.h>
@@ -40,7 +42,7 @@
 
 namespace chip {
 namespace {
-#if CONFIG_CHIP_CERTIFICATION_DECLARATION_STORAGE
+#ifdef CONFIG_CHIP_CERTIFICATION_DECLARATION_STORAGE
 // Cd globals are needed to be accessed from dfu image writer lambdas
 uint8_t sCdBuf[chip::Credentials::kMaxCMSSignedCDMessage] = { 0 };
 size_t sCdSavedBytes                                      = 0;
@@ -66,9 +68,22 @@ CHIP_ERROR OTAImageProcessorImpl::PrepareDownload()
 {
     VerifyOrReturnError(mDownloader != nullptr, CHIP_ERROR_INCORRECT_STATE);
 
+    if (DFUSync::GetInstance().Take(mDfuSyncMutexId) != CHIP_NO_ERROR)
+    {
+        ChipLogError(SoftwareUpdate, "Cannot start Matter OTA, another DFU in progress.");
+        return CHIP_ERROR_BUSY;
+    }
+
     TriggerFlashAction(ExternalFlashManager::Action::WAKE_UP);
 
-    return DeviceLayer::SystemLayer().ScheduleLambda([this] { mDownloader->OnPreparedForDownload(PrepareDownloadImpl()); });
+    return DeviceLayer::SystemLayer().ScheduleLambda([this] {
+        CHIP_ERROR err = PrepareDownloadImpl();
+        if (err != CHIP_NO_ERROR)
+        {
+            DFUSync::GetInstance().Free(mDfuSyncMutexId);
+        }
+        mDownloader->OnPreparedForDownload(err);
+    });
 }
 
 CHIP_ERROR OTAImageProcessorImpl::PrepareDownloadImpl()
@@ -89,7 +104,7 @@ CHIP_ERROR OTAImageProcessorImpl::PrepareDownloadImpl()
         ReturnErrorOnFailure(System::MapErrorZephyr(dfu_multi_image_register_writer(&writer)));
     };
 
-#if CONFIG_CHIP_CERTIFICATION_DECLARATION_STORAGE
+#ifdef CONFIG_CHIP_CERTIFICATION_DECLARATION_STORAGE
     dfu_image_writer cdWriter;
     cdWriter.image_id = CONFIG_CHIP_CERTIFiCATION_DECLARATION_OTA_IMAGE_ID;
     cdWriter.open     = [](int id, size_t size) { return size <= sizeof(sCdBuf) ? 0 : -EFBIG; };
@@ -112,6 +127,7 @@ CHIP_ERROR OTAImageProcessorImpl::PrepareDownloadImpl()
 CHIP_ERROR OTAImageProcessorImpl::Finalize()
 {
     PostOTAStateChangeEvent(DeviceLayer::kOtaDownloadComplete);
+    DFUSync::GetInstance().Free(mDfuSyncMutexId);
     return System::MapErrorZephyr(dfu_multi_image_done(true));
 }
 
@@ -119,6 +135,7 @@ CHIP_ERROR OTAImageProcessorImpl::Abort()
 {
     CHIP_ERROR error = System::MapErrorZephyr(dfu_multi_image_done(false));
 
+    DFUSync::GetInstance().Free(mDfuSyncMutexId);
     TriggerFlashAction(ExternalFlashManager::Action::SLEEP);
     PostOTAStateChangeEvent(DeviceLayer::kOtaDownloadAborted);
 
@@ -195,10 +212,10 @@ CHIP_ERROR OTAImageProcessorImpl::ProcessBlock(ByteSpan & aBlock)
 bool OTAImageProcessorImpl::IsFirstImageRun()
 {
     OTARequestorInterface * requestor = GetRequestorInstance();
-    ReturnErrorCodeIf(requestor == nullptr, false);
+    VerifyOrReturnError(requestor != nullptr, false);
 
     uint32_t currentVersion;
-    ReturnErrorCodeIf(ConfigurationMgr().GetSoftwareVersion(currentVersion) != CHIP_NO_ERROR, false);
+    VerifyOrReturnError(ConfigurationMgr().GetSoftwareVersion(currentVersion) == CHIP_NO_ERROR, false);
 
     return requestor->GetCurrentUpdateState() == OTARequestorInterface::OTAUpdateStateEnum::kApplying &&
         requestor->GetTargetVersion() == currentVersion;
@@ -207,7 +224,7 @@ bool OTAImageProcessorImpl::IsFirstImageRun()
 CHIP_ERROR OTAImageProcessorImpl::ConfirmCurrentImage()
 {
     PostOTAStateChangeEvent(DeviceLayer::kOtaApplyComplete);
-    return System::MapErrorZephyr(boot_write_img_confirmed());
+    return mImageConfirmed ? CHIP_NO_ERROR : CHIP_ERROR_INCORRECT_STATE;
 }
 
 CHIP_ERROR OTAImageProcessorImpl::ProcessHeader(ByteSpan & aBlock)
@@ -218,7 +235,7 @@ CHIP_ERROR OTAImageProcessorImpl::ProcessHeader(ByteSpan & aBlock)
         CHIP_ERROR error = mHeaderParser.AccumulateAndDecode(aBlock, header);
 
         // Needs more data to decode the header
-        ReturnErrorCodeIf(error == CHIP_ERROR_BUFFER_TOO_SMALL, CHIP_NO_ERROR);
+        VerifyOrReturnError(error != CHIP_ERROR_BUFFER_TOO_SMALL, CHIP_NO_ERROR);
         ReturnErrorOnFailure(error);
 
         mParams.totalFileBytes = header.mPayloadSize;

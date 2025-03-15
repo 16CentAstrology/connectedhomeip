@@ -1,6 +1,6 @@
 /*
  *
- *    Copyright (c) 2020 Project CHIP Authors
+ *    Copyright (c) 2020-2025 Project CHIP Authors
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -23,13 +23,18 @@
 
 #pragma once
 
+#include <ble/Ble.h>
+#include <lib/core/Global.h>
+#include <lib/support/CodeUtils.h>
+#include <platform/Darwin/BleApplicationDelegateImpl.h>
+#include <platform/Darwin/BleConnectionDelegateImpl.h>
+#include <platform/Darwin/BlePlatformDelegateImpl.h>
+#include <platform/Darwin/BleScannerDelegate.h>
+
 #if CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
 
 namespace chip {
 namespace DeviceLayer {
-
-class BleScannerDelegate;
-
 namespace Internal {
 
 using namespace chip::Ble;
@@ -37,15 +42,19 @@ using namespace chip::Ble;
 /**
  * Concrete implementation of the BLEManagerImpl singleton object for the Darwin platforms.
  */
-class BLEManagerImpl final : public BLEManager, private BleLayer
+class BLEManagerImpl final : public BLEManager,
+                             private BleLayer,
+                             private BleApplicationDelegateImpl,
+                             private BleConnectionDelegateImpl,
+                             private BlePlatformDelegateImpl
 {
     // Allow the BLEManager interface class to delegate method calls to
     // the implementation methods provided by this class.
     friend BLEManager;
 
 public:
-    CHIP_ERROR ConfigureBle(uint32_t aNodeId, bool aIsCentral) { return CHIP_NO_ERROR; }
-    CHIP_ERROR StartScan(BleScannerDelegate * delegate = nullptr);
+    CHIP_ERROR ConfigureBle(uint32_t bleDeviceId, bool aIsCentral) { return CHIP_NO_ERROR; }
+    CHIP_ERROR StartScan(BleScannerDelegate * delegate, BleScanMode mode = BleScanMode::kDefault);
     CHIP_ERROR StopScan();
 
 private:
@@ -68,11 +77,7 @@ private:
     friend BLEManager & BLEMgr(void);
     friend BLEManagerImpl & BLEMgrImpl(void);
 
-    static BLEManagerImpl sInstance;
-
-    BleConnectionDelegate * mConnectionDelegate   = nullptr;
-    BlePlatformDelegate * mPlatformDelegate       = nullptr;
-    BleApplicationDelegate * mApplicationDelegate = nullptr;
+    static Global<BLEManagerImpl> sInstance;
 };
 
 /**
@@ -83,7 +88,7 @@ private:
  */
 inline BLEManager & BLEMgr(void)
 {
-    return BLEManagerImpl::sInstance;
+    return BLEManagerImpl::sInstance.get();
 }
 
 /**
@@ -94,7 +99,7 @@ inline BLEManager & BLEMgr(void)
  */
 inline BLEManagerImpl & BLEMgrImpl(void)
 {
-    return BLEManagerImpl::sInstance;
+    return BLEManagerImpl::sInstance.get();
 }
 
 } // namespace Internal

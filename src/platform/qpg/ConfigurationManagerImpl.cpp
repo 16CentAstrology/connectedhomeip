@@ -70,6 +70,7 @@ CHIP_ERROR ConfigurationManagerImpl::Init()
         err = StoreRebootCount(1);
         SuccessOrExit(err);
     }
+
     if (!QPGConfig::ConfigValueExists(QPGConfig::kCounterKey_TotalOperationalHours))
     {
         err = StoreTotalOperationalHours(0);
@@ -126,12 +127,6 @@ CHIP_ERROR ConfigurationManagerImpl::StoreRebootCount(uint32_t rebootCount)
 
 CHIP_ERROR ConfigurationManagerImpl::GetTotalOperationalHours(uint32_t & totalOperationalHours)
 {
-    if (!QPGConfig::ConfigValueExists(QPGConfig::kCounterKey_TotalOperationalHours))
-    {
-        totalOperationalHours = 0;
-        return CHIP_NO_ERROR;
-    }
-
     return QPGConfig::ReadConfigValue(QPGConfig::kCounterKey_TotalOperationalHours, totalOperationalHours);
 }
 

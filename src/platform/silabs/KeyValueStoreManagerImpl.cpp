@@ -75,7 +75,7 @@ uint16_t KeyValueStoreManagerImpl::hashKvsKeyString(const char * key) const
     uint8_t hash256[Crypto::kSHA256_Hash_Length] = { 0 };
     Crypto::Hash_SHA256(reinterpret_cast<const uint8_t *>(key), strlen(key), hash256);
 
-    uint16_t hash16, i = 0;
+    uint16_t hash16 = 0, i = 0;
 
     while (!hash16 && (i < (Crypto::kSHA256_Hash_Length - 1)))
     {
@@ -88,9 +88,9 @@ uint16_t KeyValueStoreManagerImpl::hashKvsKeyString(const char * key) const
 CHIP_ERROR KeyValueStoreManagerImpl::MapKvsKeyToNvm3(const char * key, uint16_t hash, uint32_t & nvm3Key, bool isSlotNeeded) const
 {
     CHIP_ERROR err;
-    char * strPrefix          = nullptr;
-    uint8_t firstEmptyKeySlot = kMaxEntries;
-    for (uint8_t keyIndex = 0; keyIndex < kMaxEntries; keyIndex++)
+    char * strPrefix           = nullptr;
+    uint16_t firstEmptyKeySlot = kMaxEntries;
+    for (uint16_t keyIndex = 0; keyIndex < kMaxEntries; keyIndex++)
     {
         if (mKvsKeyMap[keyIndex] == hash)
         {
@@ -165,7 +165,7 @@ void KeyValueStoreManagerImpl::ScheduleKeyMapSave(void)
         Commit the key map in nvm once it as stabilized.
     */
     SystemLayer().StartTimer(
-        std::chrono::duration_cast<System::Clock::Timeout>(System::Clock::Seconds32(SILABS_KVS_SAVE_DELAY_SECONDS)),
+        std::chrono::duration_cast<System::Clock::Timeout>(System::Clock::Seconds32(SL_KVS_SAVE_DELAY_SECONDS)),
         KeyValueStoreManagerImpl::OnScheduledKeyMapSave, NULL);
 }
 
@@ -183,7 +183,7 @@ CHIP_ERROR KeyValueStoreManagerImpl::_Get(const char * key, void * value, size_t
     // The user doesn't need the KeyString prefix, Read data after it
     size_t KeyStringLen = strlen(key);
     err                 = SilabsConfig::ReadConfigValueBin(nvm3Key, reinterpret_cast<uint8_t *>(value), value_size, outLen,
-                                           (offset_bytes + KeyStringLen));
+                                                           (offset_bytes + KeyStringLen));
     if (read_bytes_size)
     {
         *read_bytes_size = outLen;
@@ -247,7 +247,7 @@ CHIP_ERROR KeyValueStoreManagerImpl::_Delete(const char * key)
 void KeyValueStoreManagerImpl::ErasePartition(void)
 {
     // Iterate over all the Matter Kvs nvm3 records and delete each one...
-    for (uint32_t nvm3Key = SilabsConfig::kMinConfigKey_MatterKvs; nvm3Key <= SilabsConfig::kMaxConfigKey_MatterKvs; nvm3Key++)
+    for (uint32_t nvm3Key = SilabsConfig::kMinConfigKey_MatterKvs; nvm3Key <= SilabsConfig::kConfigKey_KvsLastKeySlot; nvm3Key++)
     {
         SilabsConfig::ClearConfigValue(nvm3Key);
     }
@@ -300,5 +300,14 @@ void KeyValueStoreManagerImpl::KvsMapMigration(void)
 }
 
 } // namespace PersistedStorage
+
+namespace Silabs {
+
+void MigrateKvsMap(void)
+{
+    PersistedStorage::KeyValueStoreMgrImpl().KvsMapMigration();
+}
+
+} // namespace Silabs
 } // namespace DeviceLayer
 } // namespace chip

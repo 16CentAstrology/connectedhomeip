@@ -19,10 +19,7 @@
 #pragma once
 
 #include <app-common/zap-generated/cluster-objects.h>
-#include <app/util/af-enums.h>
-#include <app/util/af.h>
-#include <app/util/attribute-storage.h>
-#include <app/util/basic-types.h>
+
 #include <protocols/interaction_model/StatusCode.h>
 
 namespace chip {
@@ -56,6 +53,8 @@ public:
          */
         inline pointer end() const { return mEnd; }
 
+        ModeOptionsProvider() : mBegin(nullptr), mEnd(nullptr) {}
+
         ModeOptionsProvider(const pointer aBegin, const pointer aEnd) : mBegin(aBegin), mEnd(aEnd) {}
 
         pointer mBegin;
@@ -75,7 +74,7 @@ public:
      * @param mode The mode for which to search the ModeOptionStruct.
      * @param dataPtr The pointer to receive the ModeOptionStruct, if one is found.
      * @return Status::Success if successfully found the option. Otherwise, returns appropriate status code (found in
-     * <app/util/af-enums.h>)
+     * <protocols/interaction_model/StatusCodeList.h>)
      */
     virtual Protocols::InteractionModel::Status getModeOptionByMode(EndpointId endpointId, uint8_t mode,
                                                                     const ModeOptionStructType ** dataPtr) const = 0;
@@ -84,6 +83,8 @@ public:
 };
 
 const SupportedModesManager * getSupportedModesManager();
+
+void setSupportedModesManager(SupportedModesManager * aSupportedModesManager);
 
 } // namespace ModeSelect
 } // namespace Clusters

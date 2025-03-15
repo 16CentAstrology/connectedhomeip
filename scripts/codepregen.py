@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import enum
 import itertools
 import logging
 import multiprocessing
@@ -25,18 +24,17 @@ import click
 
 try:
     from pregenerate import FindPregenerationTargets, TargetFilter
-except:
-    import os
+except ImportError:
     sys.path.append(os.path.abspath(os.path.dirname(__file__)))
     from pregenerate import FindPregenerationTargets, TargetFilter
 
 from pregenerate.executors import DryRunner, ShellRunner
-from pregenerate.types import IdlFileType
+from pregenerate.type_definitions import IdlFileType
 
 try:
     import coloredlogs
     _has_coloredlogs = True
-except:
+except ImportError:
     _has_coloredlogs = False
 
 # Supported log levels, mapping string values required for argument
@@ -85,8 +83,13 @@ def _ParallelGenerateOne(arg):
     '--sdk-root',
     default=None,
     help='Path to the SDK root (where .zap/.matter files exist).')
+@click.option(
+    '--external-root',
+    default=None,
+    multiple=True,
+    help='Path to an external app root (where .zap/.matter files exist).')
 @click.argument('output_dir')
-def main(log_level, parallel, dry_run, generator, input_glob, sdk_root, output_dir):
+def main(log_level, parallel, dry_run, generator, input_glob, sdk_root, external_root, output_dir):
     if _has_coloredlogs:
         coloredlogs.install(level=__LOG_LEVELS__[
                             log_level], fmt='%(asctime)s %(levelname)-7s %(message)s')
@@ -122,7 +125,7 @@ def main(log_level, parallel, dry_run, generator, input_glob, sdk_root, output_d
     elif generator == 'codegen':
         filter.file_type = IdlFileType.MATTER
 
-    targets = FindPregenerationTargets(sdk_root, filter, runner)
+    targets = FindPregenerationTargets(sdk_root, external_root, filter, runner)
 
     runner.ensure_directory_exists(output_dir)
     if parallel:

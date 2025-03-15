@@ -58,7 +58,7 @@ void LightSwitchChangedHandler(const EmberBindingTableEntry & binding, Operation
     if (data->isReadAttribute)
     {
         // It should always enter here if isReadAttribute is true
-        if (binding.type == EMBER_UNICAST_BINDING && !data->isGroup)
+        if (binding.type == MATTER_UNICAST_BINDING && !data->isGroup)
         {
             switch (data->clusterId)
             {
@@ -82,7 +82,7 @@ void LightSwitchChangedHandler(const EmberBindingTableEntry & binding, Operation
     }
     else
     {
-        if (binding.type == EMBER_MULTICAST_BINDING && data->isGroup)
+        if (binding.type == MATTER_MULTICAST_BINDING && data->isGroup)
         {
             switch (data->clusterId)
             {
@@ -103,7 +103,7 @@ void LightSwitchChangedHandler(const EmberBindingTableEntry & binding, Operation
                 break;
             }
         }
-        else if (binding.type == EMBER_UNICAST_BINDING && !data->isGroup)
+        else if (binding.type == MATTER_UNICAST_BINDING && !data->isGroup)
         {
             switch (data->clusterId)
             {
@@ -190,11 +190,11 @@ CHIP_ERROR BindingGroupBindCommandHandler(int argc, char ** argv)
     VerifyOrReturnError(argc == 2, CHIP_ERROR_INVALID_ARGUMENT);
 
     EmberBindingTableEntry * entry = Platform::New<EmberBindingTableEntry>();
-    entry->type                    = EMBER_MULTICAST_BINDING;
+    entry->type                    = MATTER_MULTICAST_BINDING;
     entry->fabricIndex             = atoi(argv[0]);
     entry->groupId                 = atoi(argv[1]);
     entry->local                   = 1; // Hardcoded to endpoint 1 for now
-    entry->clusterId.SetValue(6);       // Hardcoded to OnOff cluster for now
+    entry->clusterId.emplace(6);        // Hardcoded to OnOff cluster for now
 
     DeviceLayer::PlatformMgr().ScheduleWork(BindingWorkerFunction, reinterpret_cast<intptr_t>(entry));
     return CHIP_NO_ERROR;
@@ -205,12 +205,12 @@ CHIP_ERROR BindingUnicastBindCommandHandler(int argc, char ** argv)
     VerifyOrReturnError(argc == 3, CHIP_ERROR_INVALID_ARGUMENT);
 
     EmberBindingTableEntry * entry = Platform::New<EmberBindingTableEntry>();
-    entry->type                    = EMBER_UNICAST_BINDING;
+    entry->type                    = MATTER_UNICAST_BINDING;
     entry->fabricIndex             = atoi(argv[0]);
     entry->nodeId                  = atoi(argv[1]);
     entry->local                   = 1; // Hardcoded to endpoint 1 for now
     entry->remote                  = atoi(argv[2]);
-    entry->clusterId.SetValue(6); // Hardcode to OnOff cluster for now
+    entry->clusterId.emplace(6); // Hardcode to OnOff cluster for now
 
     DeviceLayer::PlatformMgr().ScheduleWork(BindingWorkerFunction, reinterpret_cast<intptr_t>(entry));
     return CHIP_NO_ERROR;
@@ -584,32 +584,37 @@ static void RegisterSwitchCommands()
 
     // Register groups command
     sShellSwitchGroupsIdentifySubCommands.RegisterCommands(sSwitchGroupsIdentifySubCommands,
-                                                           ArraySize(sSwitchGroupsIdentifySubCommands));
-    sShellSwitchGroupsOnOffSubCommands.RegisterCommands(sSwitchGroupsOnOffSubCommands, ArraySize(sSwitchGroupsOnOffSubCommands));
+                                                           MATTER_ARRAY_SIZE(sSwitchGroupsIdentifySubCommands));
+    sShellSwitchGroupsOnOffSubCommands.RegisterCommands(sSwitchGroupsOnOffSubCommands,
+                                                        MATTER_ARRAY_SIZE(sSwitchGroupsOnOffSubCommands));
     sShellSwitchGroupsLevelControlSubCommands.RegisterCommands(sSwitchGroupsLevelControlSubCommands,
-                                                               ArraySize(sSwitchGroupsLevelControlSubCommands));
+                                                               MATTER_ARRAY_SIZE(sSwitchGroupsLevelControlSubCommands));
     sShellSwitchGroupsColorControlSubCommands.RegisterCommands(sSwitchGroupsColorControlSubCommands,
-                                                               ArraySize(sSwitchGroupsColorControlSubCommands));
+                                                               MATTER_ARRAY_SIZE(sSwitchGroupsColorControlSubCommands));
     sShellSwitchGroupsThermostatSubCommands.RegisterCommands(sSwitchGroupsThermostatSubCommands,
-                                                             ArraySize(sSwitchGroupsThermostatSubCommands));
+                                                             MATTER_ARRAY_SIZE(sSwitchGroupsThermostatSubCommands));
 
     // Register commands
-    sShellSwitchIdentifySubCommands.RegisterCommands(sSwitchIdentifySubCommands, ArraySize(sSwitchIdentifySubCommands));
-    sShellSwitchIdentifyReadSubCommands.RegisterCommands(sSwitchIdentifyReadSubCommands, ArraySize(sSwitchIdentifyReadSubCommands));
-    sShellSwitchOnOffSubCommands.RegisterCommands(sSwitchOnOffSubCommands, ArraySize(sSwitchOnOffSubCommands));
-    sShellSwitchOnOffReadSubCommands.RegisterCommands(sSwitchOnOffReadSubCommands, ArraySize(sSwitchOnOffReadSubCommands));
-    sShellSwitchLevelControlSubCommands.RegisterCommands(sSwitchLevelControlSubCommands, ArraySize(sSwitchLevelControlSubCommands));
+    sShellSwitchIdentifySubCommands.RegisterCommands(sSwitchIdentifySubCommands, MATTER_ARRAY_SIZE(sSwitchIdentifySubCommands));
+    sShellSwitchIdentifyReadSubCommands.RegisterCommands(sSwitchIdentifyReadSubCommands,
+                                                         MATTER_ARRAY_SIZE(sSwitchIdentifyReadSubCommands));
+    sShellSwitchOnOffSubCommands.RegisterCommands(sSwitchOnOffSubCommands, MATTER_ARRAY_SIZE(sSwitchOnOffSubCommands));
+    sShellSwitchOnOffReadSubCommands.RegisterCommands(sSwitchOnOffReadSubCommands, MATTER_ARRAY_SIZE(sSwitchOnOffReadSubCommands));
+    sShellSwitchLevelControlSubCommands.RegisterCommands(sSwitchLevelControlSubCommands,
+                                                         MATTER_ARRAY_SIZE(sSwitchLevelControlSubCommands));
     sShellSwitchLevelControlReadSubCommands.RegisterCommands(sSwitchLevelControlReadSubCommands,
-                                                             ArraySize(sSwitchLevelControlReadSubCommands));
-    sShellSwitchColorControlSubCommands.RegisterCommands(sSwitchColorControlSubCommands, ArraySize(sSwitchColorControlSubCommands));
+                                                             MATTER_ARRAY_SIZE(sSwitchLevelControlReadSubCommands));
+    sShellSwitchColorControlSubCommands.RegisterCommands(sSwitchColorControlSubCommands,
+                                                         MATTER_ARRAY_SIZE(sSwitchColorControlSubCommands));
     sShellSwitchColorControlReadSubCommands.RegisterCommands(sSwitchColorControlReadSubCommands,
-                                                             ArraySize(sSwitchColorControlReadSubCommands));
-    sShellSwitchThermostatSubCommands.RegisterCommands(sSwitchThermostatSubCommands, ArraySize(sSwitchThermostatSubCommands));
+                                                             MATTER_ARRAY_SIZE(sSwitchColorControlReadSubCommands));
+    sShellSwitchThermostatSubCommands.RegisterCommands(sSwitchThermostatSubCommands,
+                                                       MATTER_ARRAY_SIZE(sSwitchThermostatSubCommands));
     sShellSwitchThermostatReadSubCommands.RegisterCommands(sSwitchThermostatReadSubCommands,
-                                                           ArraySize(sSwitchThermostatReadSubCommands));
-    sShellSwitchGroupsSubCommands.RegisterCommands(sSwitchGroupsSubCommands, ArraySize(sSwitchGroupsSubCommands));
-    sShellSwitchBindingSubCommands.RegisterCommands(sSwitchBindingSubCommands, ArraySize(sSwitchBindingSubCommands));
-    sShellSwitchSubCommands.RegisterCommands(sSwitchSubCommands, ArraySize(sSwitchSubCommands));
+                                                           MATTER_ARRAY_SIZE(sSwitchThermostatReadSubCommands));
+    sShellSwitchGroupsSubCommands.RegisterCommands(sSwitchGroupsSubCommands, MATTER_ARRAY_SIZE(sSwitchGroupsSubCommands));
+    sShellSwitchBindingSubCommands.RegisterCommands(sSwitchBindingSubCommands, MATTER_ARRAY_SIZE(sSwitchBindingSubCommands));
+    sShellSwitchSubCommands.RegisterCommands(sSwitchSubCommands, MATTER_ARRAY_SIZE(sSwitchSubCommands));
 
     Engine::Root().RegisterCommands(&sSwitchCommand, 1);
 }

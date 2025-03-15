@@ -23,8 +23,6 @@
  *          for Linux platforms.
  */
 
-#include <platform/internal/CHIPDeviceLayerInternal.h>
-
 #include <app-common/zap-generated/cluster-objects.h>
 #include <ifaddrs.h>
 #include <lib/core/CHIPVendorIdentifiers.hpp>
@@ -108,14 +106,14 @@ CHIP_ERROR ConfigurationManagerImpl::Init()
 
     if (!PosixConfig::ConfigValueExists(PosixConfig::kConfigKey_RegulatoryLocation))
     {
-        uint32_t location = to_underlying(chip::app::Clusters::GeneralCommissioning::RegulatoryLocationType::kIndoor);
+        uint32_t location = to_underlying(chip::app::Clusters::GeneralCommissioning::RegulatoryLocationTypeEnum::kIndoor);
         err               = WriteConfigValue(PosixConfig::kConfigKey_RegulatoryLocation, location);
         SuccessOrExit(err);
     }
 
     if (!PosixConfig::ConfigValueExists(PosixConfig::kConfigKey_LocationCapability))
     {
-        uint32_t location = to_underlying(chip::app::Clusters::GeneralCommissioning::RegulatoryLocationType::kIndoorOutdoor);
+        uint32_t location = to_underlying(chip::app::Clusters::GeneralCommissioning::RegulatoryLocationTypeEnum::kIndoorOutdoor);
         err               = WriteConfigValue(PosixConfig::kConfigKey_LocationCapability, location);
         SuccessOrExit(err);
     }
@@ -145,13 +143,13 @@ CHIP_ERROR ConfigurationManagerImpl::GetPrimaryWiFiMACAddress(uint8_t * buf)
     {
         if ((addr->ifa_addr) && (addr->ifa_addr->sa_family == AF_PACKET))
         {
-            if (strncmp(addr->ifa_name, CHIP_DEVICE_CONFIG_WIFI_STATION_IF_NAME, IFNAMSIZ) == 0)
+            if (strncmp(addr->ifa_name, CHIP_DEVICE_CONFIG_WIFI_STATION_IF_NAME, Inet::InterfaceId::kMaxIfNameLength) == 0)
             {
                 mac = (struct sockaddr_ll *) addr->ifa_addr;
                 break;
             }
 
-            if (strncmp(addr->ifa_name, "lo", IFNAMSIZ) != 0 && !mac)
+            if (strncmp(addr->ifa_name, "lo", Inet::InterfaceId::kMaxIfNameLength) != 0 && !mac)
             {
                 mac = (struct sockaddr_ll *) addr->ifa_addr;
             }
@@ -201,46 +199,6 @@ CHIP_ERROR ConfigurationManagerImpl::WritePersistedStorageValue(::chip::Platform
     PosixConfig::Key configKey{ PosixConfig::kConfigNamespace_ChipCounters, key };
     return WriteConfigValue(configKey, value);
 }
-
-#if CHIP_DEVICE_CONFIG_ENABLE_WIFI_STATION
-CHIP_ERROR ConfigurationManagerImpl::GetWiFiStationSecurityType(WiFiAuthSecurityType & secType)
-{
-    CHIP_ERROR err;
-    uint32_t secTypeInt;
-
-    err = ReadConfigValue(PosixConfig::kConfigKey_WiFiStationSecType, secTypeInt);
-    if (err == CHIP_NO_ERROR)
-    {
-        secType = static_cast<WiFiAuthSecurityType>(secTypeInt);
-    }
-    return err;
-}
-
-CHIP_ERROR ConfigurationManagerImpl::UpdateWiFiStationSecurityType(WiFiAuthSecurityType secType)
-{
-    CHIP_ERROR err;
-    WiFiAuthSecurityType curSecType;
-
-    if (secType != kWiFiSecurityType_NotSpecified)
-    {
-        err = GetWiFiStationSecurityType(curSecType);
-        if (err == CHIP_DEVICE_ERROR_CONFIG_NOT_FOUND || (err == CHIP_NO_ERROR && secType != curSecType))
-        {
-            uint32_t secTypeInt = static_cast<uint32_t>(secType);
-            err                 = WriteConfigValue(PosixConfig::kConfigKey_WiFiStationSecType, secTypeInt);
-        }
-        SuccessOrExit(err);
-    }
-    else
-    {
-        err = PosixConfig::ClearConfigValue(PosixConfig::kConfigKey_WiFiStationSecType);
-        SuccessOrExit(err);
-    }
-
-exit:
-    return err;
-}
-#endif // CHIP_DEVICE_CONFIG_ENABLE_WIFI_STATION
 
 CHIP_ERROR ConfigurationManagerImpl::ReadConfigValue(Key key, bool & val)
 {

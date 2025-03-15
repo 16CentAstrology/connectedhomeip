@@ -24,7 +24,7 @@
 // system dependencies
 #import <XCTest/XCTest.h>
 
-static const uint16_t kPairingTimeoutInSeconds = 10;
+static const uint16_t kPairingTimeoutInSeconds = 30;
 static const uint64_t kDeviceId = 0x12344321;
 static NSString * kOnboardingPayload = @"MT:-24J0AFN00KA0648G00";
 static const uint16_t kLocalPort = 5541;
@@ -97,6 +97,13 @@ static MTRTestKeys * sTestKeys = nil;
     XCTAssertNotNil(csrInfo);
     XCTAssertNotNil(attestationInfo);
     XCTAssertEqual(controller, sController);
+
+    __auto_type * csrInfoCopy = [[MTROperationalCSRInfo alloc] initWithCSRElementsTLV:csrInfo.csrElementsTLV
+                                                                 attestationSignature:csrInfo.attestationSignature];
+    XCTAssertEqualObjects(csrInfoCopy.csr, csrInfo.csr);
+    XCTAssertEqualObjects(csrInfoCopy.csrNonce, csrInfo.csrNonce);
+    XCTAssertEqualObjects(csrInfoCopy.csrElementsTLV, csrInfo.csrElementsTLV);
+    XCTAssertEqualObjects(csrInfoCopy.attestationSignature, csrInfo.attestationSignature);
 
     completion(nil, [NSError errorWithDomain:MTRErrorDomain code:MTRErrorCodeIntegrityCheckFailed userInfo:nil]);
 }

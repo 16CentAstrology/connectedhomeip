@@ -28,9 +28,10 @@
 #include <app/clusters/door-lock-server/door-lock-server.h>
 #include <app/clusters/identify-server/identify-server.h>
 #include <app/clusters/network-commissioning/network-commissioning.h>
-#include <app/server/OnboardingCodesUtil.h>
 #include <app/server/Server.h>
 #include <app/util/attribute-storage.h>
+#include <data-model-providers/codegen/Instance.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 
 #include <assert.h>
 
@@ -50,7 +51,7 @@
 #define APP_TASK_STACK_SIZE (4096)
 #define APP_TASK_PRIORITY 2
 #define APP_EVENT_QUEUE_SIZE 10
-//#define EXAMPLE_VENDOR_ID                   0xcafe
+// #define EXAMPLE_VENDOR_ID                   0xcafe
 
 #ifdef portYIELD_FROM_ISR
 #define OS_YIELD_FROM_ISR(yield) portYIELD_FROM_ISR(yield)
@@ -59,8 +60,6 @@
 #else
 #error "Must have portYIELD_FROM_ISR or portEND_SWITCHING_ISR"
 #endif
-
-#define UNUSED_PARAMETER(a) (a = a)
 
 namespace {
 
@@ -117,7 +116,7 @@ CHIP_ERROR AppTask::StartAppTask()
     }
 
     // Start App task.
-    sAppTaskHandle = xTaskCreateStatic(AppTaskMain, APP_TASK_NAME, ArraySize(appStack), NULL, 1, appStack, &appTaskStruct);
+    sAppTaskHandle = xTaskCreateStatic(AppTaskMain, APP_TASK_NAME, MATTER_ARRAY_SIZE(appStack), NULL, 1, appStack, &appTaskStruct);
     if (sAppTaskHandle == nullptr)
         return APP_ERROR_CREATE_TASK_FAILED;
 
@@ -139,6 +138,7 @@ CHIP_ERROR AppTask::Init()
     // Init ZCL Data Model and start server
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    initParams.dataModelProvider = app::CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
     chip::Server::GetInstance().Init(initParams);
 
     // Initialize device attestation config
@@ -596,11 +596,12 @@ void AppTask::UpdateClusterState(intptr_t context)
     OperationSourceEnum source = OperationSourceEnum::kUnspecified;
 
     // write the new lock value
-    EmberAfStatus status =
-        DoorLockServer::Instance().SetLockState(1, newState, source) ? EMBER_ZCL_STATUS_SUCCESS : EMBER_ZCL_STATUS_FAILURE;
+    Protocols::InteractionModel::Status status = DoorLockServer::Instance().SetLockState(1, newState, source)
+        ? Protocols::InteractionModel::Status::Success
+        : Protocols::InteractionModel::Status::Failure;
 
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
+    if (status != Protocols::InteractionModel::Status::Success)
     {
-        MT793X_LOG("ERR: updating lock state %x", status);
+        MT793X_LOG("ERR: updating lock state %x", to_underlying(status));
     }
 }

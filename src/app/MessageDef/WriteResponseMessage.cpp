@@ -54,7 +54,7 @@ CHIP_ERROR WriteResponseMessage::Parser::PrettyPrint() const
             ReturnErrorOnFailure(writeResponses.PrettyPrint());
             PRETTY_PRINT_DECDEPTH();
             break;
-        case kInteractionModelRevisionTag:
+        case Revision::kInteractionModelRevisionTag:
             ReturnErrorOnFailure(MessageParser::CheckInteractionModelRevision(reader));
             break;
         default:
@@ -98,7 +98,7 @@ AttributeStatusIBs::Builder & WriteResponseMessage::Builder::GetWriteResponses()
     return mWriteResponses;
 }
 
-WriteResponseMessage::Builder & WriteResponseMessage::Builder::EndOfWriteResponseMessage()
+CHIP_ERROR WriteResponseMessage::Builder::EndOfWriteResponseMessage()
 {
     if (mError == CHIP_NO_ERROR)
     {
@@ -108,7 +108,7 @@ WriteResponseMessage::Builder & WriteResponseMessage::Builder::EndOfWriteRespons
     {
         EndOfContainer();
     }
-    return *this;
+    return GetError();
 }
 } // namespace app
 } // namespace chip

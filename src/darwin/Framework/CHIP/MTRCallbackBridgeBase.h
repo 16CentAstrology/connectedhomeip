@@ -18,14 +18,16 @@
 #import <Foundation/Foundation.h>
 
 #import "MTRBaseDevice_Internal.h"
+#import "MTRDeviceController_Concrete.h"
 #import "MTRDeviceController_Internal.h"
 #import "MTRError_Internal.h"
+#import "MTRLogging_Internal.h"
 #import "zap-generated/MTRBaseClusters.h"
 
 #include <app/data-model/NullObject.h>
 #include <messaging/ExchangeMgr.h>
 #include <platform/CHIPDeviceLayer.h>
-#include <transport/SessionHandle.h>
+#include <transport/Session.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -36,17 +38,6 @@ NS_ASSUME_NONNULL_BEGIN
  */
 class MTRCallbackBridgeBase {
 public:
-    /**
-     * Run the given MTRActionBlock on the Matter thread, after getting a CASE
-     * session (possibly pre-existing) to the given node ID on the fabric
-     * represented by the given MTRDeviceController.  On success, convert the
-     * success value to whatever type it needs to be to call the callback type
-     * we're templated over.  Once this function has been called, on a callback
-     * bridge allocated with `new`, the bridge object must not be accessed by
-     * the caller.  The action block will handle deleting the bridge.
-     */
-    void DispatchAction(chip::NodeId nodeID, MTRDeviceController * controller) && { ActionWithNodeID(nodeID, controller); }
-
     /**
      * Run the given MTRActionBlock on the Matter thread after getting a secure
      * session corresponding to the given MTRBaseDevice.  On success, convert
@@ -60,7 +51,7 @@ public:
         if (device.isPASEDevice) {
             ActionWithPASEDevice(device);
         } else {
-            ActionWithNodeID(device.nodeID, device.deviceController);
+            ActionWithNodeID(device.nodeID, device.concreteController);
         }
     }
 
@@ -81,20 +72,33 @@ protected:
     {
         LogRequestStart();
 
-        [device.deviceController getSessionForCommissioneeDevice:device.nodeID
-                                                      completion:^(chip::Messaging::ExchangeManager * exchangeManager,
-                                                          const chip::Optional<chip::SessionHandle> & session, NSError * error) {
-                                                          MaybeDoAction(exchangeManager, session, error);
-                                                      }];
+        MTRDeviceController_Concrete * _Nullable controller = device.concreteController;
+        if (!controller) {
+            MTR_LOG_ERROR("Trying to perform action with PASE device with a non-concrete controller");
+            MaybeDoAction(nullptr, chip::NullOptional, [MTRError errorForCHIPErrorCode:CHIP_ERROR_INCORRECT_STATE]);
+            return;
+        }
+
+        [controller getSessionForCommissioneeDevice:device.nodeID
+                                         completion:^(chip::Messaging::ExchangeManager * exchangeManager,
+                                             const chip::Optional<chip::SessionHandle> & session, NSError * _Nullable error, NSNumber * _Nullable retryDelay) {
+                                             MaybeDoAction(exchangeManager, session, error);
+                                         }];
     }
 
-    void ActionWithNodeID(chip::NodeId nodeID, MTRDeviceController * controller)
+    void ActionWithNodeID(chip::NodeId nodeID, MTRDeviceController_Concrete * _Nullable controller)
     {
         LogRequestStart();
 
+        if (!controller) {
+            MTR_LOG_ERROR("Trying to perform action on node ID 0x%016llX (%llu) with a non-concrete controller", nodeID, nodeID);
+            MaybeDoAction(nullptr, chip::NullOptional, [MTRError errorForCHIPErrorCode:CHIP_ERROR_INCORRECT_STATE]);
+            return;
+        }
+
         [controller getSessionForNode:nodeID
-                           completion:^(chip::Messaging::ExchangeManager * exchangeManager,
-                               const chip::Optional<chip::SessionHandle> & session, NSError * error) {
+                           completion:^(chip::Messaging::ExchangeManager * _Nullable exchangeManager,
+                               const chip::Optional<chip::SessionHandle> & session, NSError * _Nullable error, NSNumber * _Nullable retryDelay) {
                                MaybeDoAction(exchangeManager, session, error);
                            }];
     }
@@ -147,23 +151,12 @@ using MTRActionBlockT = CHIP_ERROR (^)(chip::Messaging::ExchangeManager & exchan
 template <typename SuccessCallback>
 using MTRLocalActionBlockT = CHIP_ERROR (^)(SuccessCallback successCb, MTRErrorCallback failureCb);
 
-template <class T> class MTRCallbackBridge : public MTRCallbackBridgeBase {
+template <class T>
+class MTRCallbackBridge : public MTRCallbackBridgeBase {
 public:
     using MTRActionBlock = MTRActionBlockT<T>;
     using MTRLocalActionBlock = MTRLocalActionBlockT<T>;
     using SuccessCallbackType = T;
-
-    /**
-     * Construct a callback bridge, which can then have DispatcLocalAction() called
-     * on it.
-     */
-    MTRCallbackBridge(dispatch_queue_t queue, MTRResponseHandler handler, T OnSuccessFn)
-        : MTRCallbackBridgeBase(queue)
-        , mHandler(handler)
-        , mSuccess(OnSuccessFn)
-        , mFailure(OnFailureFn)
-    {
-    }
 
     /**
      * Construct a callback bridge, which can then have DispatchAction() called
@@ -176,41 +169,6 @@ public:
         , mSuccess(OnSuccessFn)
         , mFailure(OnFailureFn)
     {
-    }
-
-    /**
-     * Try to run the given MTRLocalActionBlock on the Matter thread, if we have
-     * a device and it's attached to a running controller, then handle
-     * converting the value produced by the success callback to the right type
-     * so it can be passed to a callback of the type we're templated over.
-     *
-     * Does not attempt to establish any sessions to devices.  Must not be used
-     * with any action blocks that need a session.
-     */
-    void DispatchLocalAction(MTRBaseDevice * _Nullable device, MTRLocalActionBlock _Nonnull action)
-    {
-        if (!device) {
-            OnFailureFn(this, CHIP_ERROR_INCORRECT_STATE);
-            return;
-        }
-
-        LogRequestStart();
-
-        [device.deviceController
-            asyncDispatchToMatterQueue:^() {
-                CHIP_ERROR err = action(mSuccess, mFailure);
-                if (err != CHIP_NO_ERROR) {
-                    ChipLogError(Controller, "Failure performing action. C++-mangled success callback type: '%s', error: %s",
-                        typeid(T).name(), chip::ErrorStr(err));
-
-                    // Take the normal async error-reporting codepath.  This will also
-                    // handle cleaning us up properly.
-                    OnFailureFn(this, err);
-                }
-            }
-            errorHandler:^(NSError * error) {
-                DispatchFailure(this, error);
-            }];
     }
 
     void LogRequestStart() override
@@ -261,6 +219,8 @@ private:
         }
 
         if (!callbackBridge->mQueue) {
+            ChipLogDetail(Controller, "%s %f seconds: can't dispatch response; no queue", callbackBridge->mCookie.UTF8String,
+                -[callbackBridge->mRequestTime timeIntervalSinceNow]);
             if (!callbackBridge->mKeepAlive) {
                 delete callbackBridge;
             }

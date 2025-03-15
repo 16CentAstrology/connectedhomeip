@@ -18,31 +18,50 @@
 
 #import <Matter/Matter.h>
 
+#import "debug/LeakChecker.h"
 #import "logging/logging.h"
 
+#include "commands/bdx/Commands.h"
 #include "commands/common/Commands.h"
+#include "commands/configuration/Commands.h"
+#include "commands/dcl/Commands.h"
+#include "commands/delay/Commands.h"
+#include "commands/discover/Commands.h"
 #include "commands/interactive/Commands.h"
+#include "commands/memory/Commands.h"
 #include "commands/pairing/Commands.h"
 #include "commands/payload/Commands.h"
 #include "commands/provider/Commands.h"
 #include "commands/storage/Commands.h"
 
 #include <zap-generated/cluster/Commands.h>
-#include <zap-generated/test/Commands.h>
 
 int main(int argc, const char * argv[])
 {
-    @autoreleasepool {
-        dft::logging::Setup();
+    __auto_type * runQueue = dispatch_queue_create("com.chip.main.dft", DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL);
+    dispatch_async(runQueue, ^{
+        int exitCode = EXIT_SUCCESS;
 
-        Commands commands;
-        registerCommandsPairing(commands);
-        registerCommandsInteractive(commands);
-        registerCommandsPayload(commands);
-        registerClusterOtaSoftwareUpdateProviderInteractive(commands);
-        registerCommandsStorage(commands);
-        registerCommandsTests(commands);
-        registerClusters(commands);
-        return commands.Run(argc, (char **) argv);
-    }
+        @autoreleasepool {
+            dft::logging::Setup();
+            Commands commands;
+            registerCommandsBdx(commands);
+            registerCommandsPairing(commands);
+            registerCommandsDCL(commands);
+            registerCommandsDelay(commands);
+            registerCommandsDiscover(commands);
+            registerCommandsInteractive(commands);
+            registerCommandsMemory(commands);
+            registerCommandsPayload(commands);
+            registerClusterOtaSoftwareUpdateProviderInteractive(commands);
+            registerCommandsStorage(commands);
+            registerCommandsConfiguration(commands);
+            registerClusters(commands);
+            exitCode = commands.Run(argc, (char **) argv);
+        }
+        exit(ConditionalLeaksCheck(exitCode));
+    });
+
+    dispatch_main();
+    return EXIT_SUCCESS;
 }

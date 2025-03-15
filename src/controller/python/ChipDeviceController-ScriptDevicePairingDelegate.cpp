@@ -19,8 +19,16 @@
 
 #include "ChipDeviceController-ScriptDevicePairingDelegate.h"
 #include "lib/support/TypeTraits.h"
+#include <app/icd/client/DefaultICDClientStorage.h>
 #include <controller/python/chip/native/PyChipError.h>
+#include <setup_payload/ManualSetupPayloadGenerator.h>
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
+
+#include <string>
+
+extern chip::app::DefaultICDClientStorage sICDClientStorage;
+extern chip::Controller::CommissioningParameters sCommissioningParameters;
+extern uint8_t sICDSymmetricKey[chip::Crypto::kAES_CCM128_Key_Length];
 
 namespace chip {
 namespace Controller {
@@ -58,6 +66,10 @@ void ScriptDevicePairingDelegate::SetCommissioningSuccessCallback(DevicePairingD
 void ScriptDevicePairingDelegate::SetCommissioningFailureCallback(DevicePairingDelegate_OnCommissioningFailureFunct callback)
 {
     mOnCommissioningFailureCallback = callback;
+}
+void ScriptDevicePairingDelegate::SetFabricCheckCallback(DevicePairingDelegate_OnFabricCheckFunct callback)
+{
+    mOnFabricCheckCallback = callback;
 }
 
 void ScriptDevicePairingDelegate::SetCommissioningStatusUpdateCallback(
@@ -133,11 +145,15 @@ void ScriptDevicePairingDelegate::OnOpenCommissioningWindow(NodeId deviceId, CHI
 {
     if (mOnWindowOpenCompleteCallback != nullptr)
     {
-        QRCodeSetupPayloadGenerator generator(payload);
-        std::string code;
-        generator.payloadBase38Representation(code);
-        ChipLogProgress(Zcl, "code = %s", code.c_str());
-        mOnWindowOpenCompleteCallback(deviceId, payload.setUpPINCode, code.c_str(), ToPyChipError(status));
+        std::string setupManualCode;
+        std::string setupQRCode;
+
+        ManualSetupPayloadGenerator(payload).payloadDecimalStringRepresentation(setupManualCode);
+        QRCodeSetupPayloadGenerator(payload).payloadBase38Representation(setupQRCode);
+        ChipLogProgress(Zcl, "SetupManualCode = %s", setupManualCode.c_str());
+        ChipLogProgress(Zcl, "SetupQRCode = %s", setupQRCode.c_str());
+        mOnWindowOpenCompleteCallback(deviceId, payload.setUpPINCode, setupManualCode.c_str(), setupQRCode.c_str(),
+                                      ToPyChipError(status));
     }
     if (mWindowOpener != nullptr)
     {
@@ -145,11 +161,65 @@ void ScriptDevicePairingDelegate::OnOpenCommissioningWindow(NodeId deviceId, CHI
         mWindowOpener = nullptr;
     }
 }
+
+void ScriptDevicePairingDelegate::OnFabricCheck(NodeId matchingNodeId)
+{
+    if (matchingNodeId == kUndefinedNodeId)
+    {
+        ChipLogProgress(Zcl, "No matching fabric found");
+    }
+    else
+    {
+        ChipLogProgress(Zcl, "Matching fabric found");
+    }
+    if (mOnFabricCheckCallback != nullptr)
+    {
+        mOnFabricCheckCallback(matchingNodeId);
+    }
+}
+
 Callback::Callback<Controller::OnOpenCommissioningWindow> *
 ScriptDevicePairingDelegate::GetOpenWindowCallback(Controller::CommissioningWindowOpener * context)
 {
     mWindowOpener = context;
     return &mOpenWindowCallback;
+}
+
+void ScriptDevicePairingDelegate::OnICDRegistrationComplete(ScopedNodeId nodeId, uint32_t icdCounter)
+{
+    app::ICDClientInfo clientInfo;
+    clientInfo.peer_node     = nodeId;
+    clientInfo.check_in_node = chip::ScopedNodeId(sCommissioningParameters.GetICDCheckInNodeId().Value(), nodeId.GetFabricIndex());
+    clientInfo.monitored_subject = sCommissioningParameters.GetICDMonitoredSubject().Value();
+    clientInfo.start_icd_counter = icdCounter;
+    clientInfo.client_type       = sCommissioningParameters.GetICDClientType().Value();
+
+    CHIP_ERROR err = sICDClientStorage.SetKey(clientInfo, ByteSpan(sICDSymmetricKey));
+    if (err == CHIP_NO_ERROR)
+    {
+        err = sICDClientStorage.StoreEntry(clientInfo);
+    }
+
+    if (err != CHIP_NO_ERROR)
+    {
+        sICDClientStorage.RemoveKey(clientInfo);
+        ChipLogError(Controller, "Failed to persist symmetric key for " ChipLogFormatX64 ": %s",
+                     ChipLogValueX64(nodeId.GetNodeId()), err.AsString());
+        return;
+    }
+
+    ChipLogProgress(Controller, "Saved ICD Symmetric key for " ChipLogFormatX64, ChipLogValueX64(nodeId.GetNodeId()));
+    ChipLogProgress(Controller,
+                    "ICD Registration Complete for device " ChipLogFormatX64 " / Check-In NodeID: " ChipLogFormatX64
+                    " / Monitored Subject: " ChipLogFormatX64 " / ICDCounter %u",
+                    ChipLogValueX64(nodeId.GetNodeId()), ChipLogValueX64(sCommissioningParameters.GetICDCheckInNodeId().Value()),
+                    ChipLogValueX64(clientInfo.monitored_subject), icdCounter);
+}
+
+void ScriptDevicePairingDelegate::OnICDStayActiveComplete(ScopedNodeId deviceId, uint32_t promisedActiveDuration)
+{
+    ChipLogProgress(Controller, "ICD Stay Active Complete for device " ChipLogFormatX64 " / promisedActiveDuration: %u",
+                    ChipLogValueX64(deviceId.GetNodeId()), promisedActiveDuration);
 }
 
 } // namespace Controller

@@ -26,6 +26,8 @@
 #include <lwip/ip6_addr.h>
 #include <platform/CHIPDeviceLayer.h>
 
+#include <string>
+
 using namespace chip::Dnssd;
 
 namespace {
@@ -449,7 +451,7 @@ void ResolveContext::OnNewInterface(uint32_t interfaceId, const char * fullname,
         size_t len = *txtRecordIter;
         ++txtRecordIter;
         --remainingLen;
-        len = min(len, remainingLen);
+        len = std::min(len, remainingLen);
         chip::Span<const unsigned char> bytes(txtRecordIter, len);
         if (txtString.size() > 0)
         {

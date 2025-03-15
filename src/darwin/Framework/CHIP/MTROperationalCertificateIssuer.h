@@ -19,6 +19,7 @@
 
 #import <Matter/MTRCSRInfo.h>
 #import <Matter/MTRCertificates.h>
+#import <Matter/MTRDefines.h>
 #import <Matter/MTRDeviceAttestationInfo.h>
 
 NS_ASSUME_NONNULL_BEGIN
@@ -28,7 +29,7 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  * A representation of the operational certificate chain for a node.
  */
-API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
+MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
 @interface MTROperationalCertificateChain : NSObject
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -57,7 +58,7 @@ API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
 
 @end
 
-API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
+MTR_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
 @protocol MTROperationalCertificateIssuer
 @required
 
@@ -74,6 +75,10 @@ API_AVAILABLE(ios(16.4), macos(13.3), watchos(9.4), tvos(16.4))
  *
  * This will be called on the dispatch queue passed as
  * operationalCertificateIssuerQueue in the MTRDeviceControllerFactoryParams.
+ *
+ * The csrNonce in the provided MTROperationalCSRInfo will be the nonce that was
+ * sent in the CSRRequest command, which will be guaranteed, at this point, to
+ * match the nonce in the CSRResponse command.
  */
 - (void)issueOperationalCertificateForRequest:(MTROperationalCSRInfo *)csrInfo
                               attestationInfo:(MTRDeviceAttestationInfo *)attestationInfo

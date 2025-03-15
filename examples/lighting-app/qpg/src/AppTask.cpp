@@ -28,21 +28,25 @@
 #include "AppEvent.h"
 #include "AppTask.h"
 #include "ota.h"
-#include "powercycle_counting.h"
-
-#include <app/server/OnboardingCodesUtil.h>
 
 #include <app-common/zap-generated/attributes/Accessors.h>
-#include <app/clusters/general-diagnostics-server/GenericFaultTestEventTriggerDelegate.h>
+#include <app/TestEventTriggerDelegate.h>
+#include <app/clusters/general-diagnostics-server/GenericFaultTestEventTriggerHandler.h>
 #include <app/clusters/general-diagnostics-server/general-diagnostics-server.h>
 #include <app/clusters/identify-server/identify-server.h>
 #include <app/clusters/on-off-server/on-off-server.h>
+#include <app/util/persistence/DefaultAttributePersistenceProvider.h>
+#include <data-model-providers/codegen/Instance.h>
+#include <lib/core/CHIPError.h>
+#include <lib/core/CHIPPersistentStorageDelegate.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 
 #include <app/server/Dnssd.h>
 #include <app/server/Server.h>
 #include <app/util/attribute-storage.h>
 #include <lib/support/TypeTraits.h>
 
+#include <app/util/persistence/DeferredAttributePersistenceProvider.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
 
@@ -68,10 +72,13 @@ using namespace ::chip::DeviceLayer;
 #define APP_TASK_PRIORITY 2
 #define APP_EVENT_QUEUE_SIZE 10
 #define QPG_LIGHT_ENDPOINT_ID (1)
+#define SECONDS_IN_HOUR (3600)                                              // we better keep this 3600
+#define TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS (1 * SECONDS_IN_HOUR) // increment every hour
 
 static uint8_t countdown = 0;
 
 namespace {
+constexpr EndpointId kLightEndpointId = 1;
 TaskHandle_t sAppTaskHandle;
 QueueHandle_t sAppEventQueue;
 
@@ -90,47 +97,71 @@ StaticQueue_t sAppEventQueueStruct;
 StackType_t appStack[APP_TASK_STACK_SIZE / sizeof(StackType_t)];
 StaticTask_t appTaskStruct;
 
-EmberAfIdentifyEffectIdentifier sIdentifyEffect = EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_STOP_EFFECT;
+Clusters::Identify::EffectIdentifierEnum sIdentifyEffect = Clusters::Identify::EffectIdentifierEnum::kStopEffect;
 chip::DeviceLayer::DeviceInfoProviderImpl gExampleDeviceInfoProvider;
+
+// Define a custom attribute persister which makes actual write of the ColorX attribute value
+// to the non-volatile storage only when it has remained constant for 5 seconds. This is to reduce
+// the flash wearout when the attribute changes frequently as a result of MoveToLevel command.
+// DeferredAttribute object describes a deferred attribute, but also holds a buffer with a value to
+// be written, so it must live so long as the DeferredAttributePersistenceProvider object.
+//
+DeferredAttribute gPersisters[] = {
+    DeferredAttribute(
+        ConcreteAttributePath(kLightEndpointId, Clusters::ColorControl::Id, Clusters::ColorControl::Attributes::CurrentHue::Id)),
+    DeferredAttribute(ConcreteAttributePath(kLightEndpointId, Clusters::ColorControl::Id,
+                                            Clusters::ColorControl::Attributes::CurrentSaturation::Id)),
+    DeferredAttribute(
+        ConcreteAttributePath(kLightEndpointId, Clusters::LevelControl::Id, Clusters::LevelControl::Attributes::CurrentLevel::Id))
+
+};
+
+// Deferred persistence will be auto-initialized as soon as the default persistence is initialized
+DefaultAttributePersistenceProvider gSimpleAttributePersistence;
+DeferredAttributePersistenceProvider gDeferredAttributePersister(gSimpleAttributePersistence,
+                                                                 Span<DeferredAttribute>(gPersisters, 3),
+                                                                 System::Clock::Milliseconds32(5000));
 
 /**********************************************************
  * Identify Callbacks
  *********************************************************/
 
-namespace {
 void OnTriggerIdentifyEffectCompleted(chip::System::Layer * systemLayer, void * appState)
 {
-    sIdentifyEffect = EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_STOP_EFFECT;
+    sIdentifyEffect = Clusters::Identify::EffectIdentifierEnum::kStopEffect;
 }
-} // namespace
 
 void OnTriggerIdentifyEffect(Identify * identify)
 {
     sIdentifyEffect = identify->mCurrentEffectIdentifier;
 
-    if (identify->mCurrentEffectIdentifier == EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_CHANNEL_CHANGE)
+    if (identify->mEffectVariant != Clusters::Identify::EffectVariantEnum::kDefault)
     {
-        ChipLogProgress(Zcl, "IDENTIFY_EFFECT_IDENTIFIER_CHANNEL_CHANGE - Not supported, use effect variant %d",
-                        identify->mEffectVariant);
-        sIdentifyEffect = static_cast<EmberAfIdentifyEffectIdentifier>(identify->mEffectVariant);
+        ChipLogDetail(AppServer, "Identify Effect Variant unsupported. Using default");
     }
 
     switch (sIdentifyEffect)
     {
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BLINK:
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_BREATHE:
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_OKAY:
-        (void) chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds16(5), OnTriggerIdentifyEffectCompleted,
-                                                           identify);
+    case Clusters::Identify::EffectIdentifierEnum::kBlink:
+    case Clusters::Identify::EffectIdentifierEnum::kBreathe:
+    case Clusters::Identify::EffectIdentifierEnum::kOkay:
+    case Clusters::Identify::EffectIdentifierEnum::kChannelChange:
+        SystemLayer().ScheduleLambda([identify] {
+            (void) chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds16(5), OnTriggerIdentifyEffectCompleted,
+                                                               identify);
+        });
         break;
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_FINISH_EFFECT:
-        (void) chip::DeviceLayer::SystemLayer().CancelTimer(OnTriggerIdentifyEffectCompleted, identify);
-        (void) chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds16(1), OnTriggerIdentifyEffectCompleted,
-                                                           identify);
+    case Clusters::Identify::EffectIdentifierEnum::kFinishEffect:
+        SystemLayer().ScheduleLambda([identify] {
+            (void) chip::DeviceLayer::SystemLayer().CancelTimer(OnTriggerIdentifyEffectCompleted, identify);
+            (void) chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds16(1), OnTriggerIdentifyEffectCompleted,
+                                                               identify);
+        });
         break;
-    case EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_STOP_EFFECT:
-        (void) chip::DeviceLayer::SystemLayer().CancelTimer(OnTriggerIdentifyEffectCompleted, identify);
-        sIdentifyEffect = EMBER_ZCL_IDENTIFY_EFFECT_IDENTIFIER_STOP_EFFECT;
+    case Clusters::Identify::EffectIdentifierEnum::kStopEffect:
+        SystemLayer().ScheduleLambda(
+            [identify] { (void) chip::DeviceLayer::SystemLayer().CancelTimer(OnTriggerIdentifyEffectCompleted, identify); });
+        sIdentifyEffect = Clusters::Identify::EffectIdentifierEnum::kStopEffect;
         break;
     default:
         ChipLogProgress(Zcl, "No identifier effect");
@@ -141,7 +172,7 @@ Identify gIdentify = {
     chip::EndpointId{ 1 },
     [](Identify *) { ChipLogProgress(Zcl, "onIdentifyStart"); },
     [](Identify *) { ChipLogProgress(Zcl, "onIdentifyStop"); },
-    EMBER_ZCL_IDENTIFY_IDENTIFY_TYPE_VISIBLE_LED,
+    Clusters::Identify::IdentifyTypeEnum::kVisibleIndicator,
     OnTriggerIdentifyEffect,
 };
 
@@ -155,30 +186,28 @@ void OnTriggerOffWithEffect(OnOffEffect * effect)
     auto effectVariant = effect->mEffectVariant;
 
     // Uses print outs until we can support the effects
-    if (effectId == Clusters::OnOff::OnOffEffectIdentifier::kDelayedAllOff)
+    if (effectId == Clusters::OnOff::EffectIdentifierEnum::kDelayedAllOff)
     {
-        auto typedEffectVariant = static_cast<Clusters::OnOff::OnOffDelayedAllOffEffectVariant>(effectVariant);
-        if (typedEffectVariant == Clusters::OnOff::OnOffDelayedAllOffEffectVariant::kFadeToOffIn0p8Seconds)
+        auto typedEffectVariant = static_cast<Clusters::OnOff::DelayedAllOffEffectVariantEnum>(effectVariant);
+        if (typedEffectVariant == Clusters::OnOff::DelayedAllOffEffectVariantEnum::kDelayedOffFastFade)
         {
-            ChipLogProgress(Zcl, "OnOffDelayedAllOffEffectVariant::kFadeToOffIn0p8Seconds");
+            ChipLogProgress(Zcl, "DelayedAllOffEffectVariantEnum::kDelayedOffFastFade");
         }
-        else if (typedEffectVariant == Clusters::OnOff::OnOffDelayedAllOffEffectVariant::kNoFade)
+        else if (typedEffectVariant == Clusters::OnOff::DelayedAllOffEffectVariantEnum::kNoFade)
         {
-            ChipLogProgress(Zcl, "OnOffDelayedAllOffEffectVariant::kNoFade");
+            ChipLogProgress(Zcl, "DelayedAllOffEffectVariantEnum::kNoFade");
         }
-        else if (typedEffectVariant ==
-                 Clusters::OnOff::OnOffDelayedAllOffEffectVariant::k50PercentDimDownIn0p8SecondsThenFadeToOffIn12Seconds)
+        else if (typedEffectVariant == Clusters::OnOff::DelayedAllOffEffectVariantEnum::kDelayedOffSlowFade)
         {
-            ChipLogProgress(Zcl, "OnOffDelayedAllOffEffectVariant::k50PercentDimDownIn0p8SecondsThenFadeToOffIn12Seconds");
+            ChipLogProgress(Zcl, "DelayedAllOffEffectVariantEnum::kDelayedOffSlowFade");
         }
     }
-    else if (effectId == Clusters::OnOff::OnOffEffectIdentifier::kDyingLight)
+    else if (effectId == Clusters::OnOff::EffectIdentifierEnum::kDyingLight)
     {
-        auto typedEffectVariant = static_cast<Clusters::OnOff::OnOffDyingLightEffectVariant>(effectVariant);
-        if (typedEffectVariant ==
-            Clusters::OnOff::OnOffDyingLightEffectVariant::k20PercenterDimUpIn0p5SecondsThenFadeToOffIn1Second)
+        auto typedEffectVariant = static_cast<Clusters::OnOff::DyingLightEffectVariantEnum>(effectVariant);
+        if (typedEffectVariant == Clusters::OnOff::DyingLightEffectVariantEnum::kDyingLightFadeOff)
         {
-            ChipLogProgress(Zcl, "OnOffDyingLightEffectVariant::k20PercenterDimUpIn0p5SecondsThenFadeToOffIn1Second");
+            ChipLogProgress(Zcl, "DyingLightEffectVariantEnum::kDyingLightFadeOff");
         }
     }
 }
@@ -186,8 +215,8 @@ void OnTriggerOffWithEffect(OnOffEffect * effect)
 OnOffEffect gEffect = {
     chip::EndpointId{ 1 },
     OnTriggerOffWithEffect,
-    Clusters::OnOff::OnOffEffectIdentifier::kDelayedAllOff,
-    to_underlying(Clusters::OnOff::OnOffDelayedAllOffEffectVariant::kFadeToOffIn0p8Seconds),
+    Clusters::OnOff::EffectIdentifierEnum::kDelayedAllOff,
+    to_underlying(Clusters::OnOff::DelayedAllOffEffectVariantEnum::kDelayedOffFastFade),
 };
 
 } // namespace
@@ -218,7 +247,8 @@ CHIP_ERROR AppTask::StartAppTask()
     }
 
     // Start App task.
-    sAppTaskHandle = xTaskCreateStatic(AppTaskMain, APP_TASK_NAME, ArraySize(appStack), nullptr, 1, appStack, &appTaskStruct);
+    sAppTaskHandle =
+        xTaskCreateStatic(AppTaskMain, APP_TASK_NAME, MATTER_ARRAY_SIZE(appStack), nullptr, 1, appStack, &appTaskStruct);
     if (sAppTaskHandle == nullptr)
     {
         return CHIP_ERROR_NO_MEMORY;
@@ -232,7 +262,9 @@ void AppTask::InitServer(intptr_t arg)
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
 
+    VerifyOrDie(gSimpleAttributePersistence.Init(initParams.persistentStorageDelegate) == CHIP_NO_ERROR);
     gExampleDeviceInfoProvider.SetStorageDelegate(initParams.persistentStorageDelegate);
+
     chip::DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
 
     chip::Inet::EndPointStateOpenThread::OpenThreadEndpointInitParam nativeParams;
@@ -241,12 +273,18 @@ void AppTask::InitServer(intptr_t arg)
     nativeParams.openThreadInstancePtr = chip::DeviceLayer::ThreadStackMgrImpl().OTInstance();
     initParams.endpointNativeParams    = static_cast<void *>(&nativeParams);
 
-    // Use GenericFaultTestEventTriggerDelegate to inject faults
-    static GenericFaultTestEventTriggerDelegate testEventTriggerDelegate{ ByteSpan(sTestEventTriggerEnableKey) };
+    // Use GenericFaultTestEventTriggerHandler to inject faults
+    static SimpleTestEventTriggerDelegate sTestEventTriggerDelegate{};
+    static GenericFaultTestEventTriggerHandler sFaultTestEventTriggerHandler{};
+    VerifyOrDie(sTestEventTriggerDelegate.Init(ByteSpan(sTestEventTriggerEnableKey)) == CHIP_NO_ERROR);
+    VerifyOrDie(sTestEventTriggerDelegate.AddHandler(&sFaultTestEventTriggerHandler) == CHIP_NO_ERROR);
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
-    initParams.testEventTriggerDelegate = &testEventTriggerDelegate;
+    initParams.dataModelProvider        = CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
+    initParams.testEventTriggerDelegate = &sTestEventTriggerDelegate;
 
     chip::Server::GetInstance().Init(initParams);
+
+    app::SetAttributePersistenceProvider(&gDeferredAttributePersister);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_EXTENDED_DISCOVERY
     chip::app::DnssdServer::Instance().SetExtendedDiscoveryTimeoutSecs(extDiscTimeoutSecs);
@@ -255,15 +293,23 @@ void AppTask::InitServer(intptr_t arg)
     // Open commissioning after boot if no fabric was available
     if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0)
     {
-        PlatformMgr().ScheduleWork(OpenCommissioning, 0);
+        ChipLogProgress(NotSpecified, "No fabrics, starting commissioning.");
+        AppTask::OpenCommissioning((intptr_t) 0);
     }
 }
 
 void AppTask::OpenCommissioning(intptr_t arg)
 {
     // Enable BLE advertisements
-    chip::Server::GetInstance().GetCommissioningWindowManager().OpenBasicCommissioningWindow();
-    ChipLogProgress(NotSpecified, "BLE advertising started. Waiting for Pairing.");
+
+    SystemLayer().ScheduleLambda([] {
+        CHIP_ERROR err;
+        err = chip::Server::GetInstance().GetCommissioningWindowManager().OpenBasicCommissioningWindow();
+        if (err == CHIP_NO_ERROR)
+        {
+            ChipLogProgress(NotSpecified, "BLE advertising started. Waiting for Pairing.");
+        }
+    });
 }
 
 CHIP_ERROR AppTask::Init()
@@ -299,7 +345,19 @@ CHIP_ERROR AppTask::Init()
     ConfigurationMgr().LogDeviceConfig();
     PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
 
+    sIsThreadProvisioned     = ConnectivityMgr().IsThreadProvisioned();
+    sIsThreadEnabled         = ConnectivityMgr().IsThreadEnabled();
+    sHaveBLEConnections      = (ConnectivityMgr().NumBLEConnections() != 0);
+    sIsBLEAdvertisingEnabled = ConnectivityMgr().IsBLEAdvertisingEnabled();
     UpdateLEDs();
+
+    err = chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS),
+                                                      TotalHoursTimerHandler, this);
+
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(NotSpecified, "StartTimer failed %s: ", chip::ErrorStr(err));
+    }
 
     return err;
 }
@@ -397,6 +455,40 @@ void AppTask::TimerEventHandler(chip::System::Layer * aLayer, void * aAppState)
     sAppTask.PostEvent(&event);
 }
 
+void AppTask::TotalHoursTimerHandler(chip::System::Layer * aLayer, void * aAppState)
+{
+    ChipLogProgress(NotSpecified, "HourlyTimer");
+
+    CHIP_ERROR err;
+    uint32_t totalOperationalHours = 0;
+
+    err = ConfigurationMgr().GetTotalOperationalHours(totalOperationalHours);
+
+    if (err == CHIP_NO_ERROR)
+    {
+        ConfigurationMgr().StoreTotalOperationalHours(totalOperationalHours +
+                                                      (TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS / SECONDS_IN_HOUR));
+    }
+    else if (err == CHIP_DEVICE_ERROR_CONFIG_NOT_FOUND)
+    {
+        totalOperationalHours = 0; // set this explicitly to 0 for safety
+        ConfigurationMgr().StoreTotalOperationalHours(totalOperationalHours +
+                                                      (TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS / SECONDS_IN_HOUR));
+    }
+    else
+    {
+        ChipLogError(DeviceLayer, "Failed to get total operational hours of the Node");
+    }
+
+    err = chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS),
+                                                      TotalHoursTimerHandler, nullptr);
+
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(NotSpecified, "StartTimer failed %s: ", chip::ErrorStr(err));
+    }
+}
+
 void AppTask::FunctionTimerEventHandler(AppEvent * aEvent)
 {
     if (aEvent->Type != AppEvent::kEventType_Timer)
@@ -434,7 +526,7 @@ void AppTask::FunctionTimerEventHandler(AppEvent * aEvent)
     {
         // Actually trigger Factory Reset
         sAppTask.mFunction = kFunction_NoneSelected;
-        chip::Server::GetInstance().ScheduleFactoryReset();
+        SystemLayer().ScheduleLambda([] { chip::Server::GetInstance().ScheduleFactoryReset(); });
     }
 }
 
@@ -480,10 +572,8 @@ void AppTask::FunctionHandler(AppEvent * aEvent)
             else
             {
                 // Enable BLE advertisements and pairing window
-                if (chip::Server::GetInstance().GetCommissioningWindowManager().OpenBasicCommissioningWindow() == CHIP_NO_ERROR)
-                {
-                    ChipLogProgress(NotSpecified, "BLE advertising started. Waiting for Pairing.");
-                }
+                AppTask::OpenCommissioning((intptr_t) 0);
+                ChipLogProgress(NotSpecified, "BLE advertising started. Waiting for Pairing.");
             }
         }
         else if (sAppTask.mFunctionTimerActive && sAppTask.mFunction == kFunction_SoftwareUpdate)
@@ -511,24 +601,28 @@ void AppTask::FunctionHandler(AppEvent * aEvent)
 
 void AppTask::CancelTimer()
 {
-    chip::DeviceLayer::SystemLayer().CancelTimer(TimerEventHandler, this);
-    mFunctionTimerActive = false;
+    SystemLayer().ScheduleLambda([this] {
+        chip::DeviceLayer::SystemLayer().CancelTimer(TimerEventHandler, this);
+        this->mFunctionTimerActive = false;
+    });
 }
 
 void AppTask::StartTimer(uint32_t aTimeoutInMs)
 {
-    CHIP_ERROR err;
+    SystemLayer().ScheduleLambda([aTimeoutInMs, this] {
+        CHIP_ERROR err;
+        chip::DeviceLayer::SystemLayer().CancelTimer(TimerEventHandler, this);
+        err =
+            chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(aTimeoutInMs), TimerEventHandler, this);
+        SuccessOrExit(err);
 
-    chip::DeviceLayer::SystemLayer().CancelTimer(TimerEventHandler, this);
-    err = chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(aTimeoutInMs), TimerEventHandler, this);
-    SuccessOrExit(err);
-
-    mFunctionTimerActive = true;
-exit:
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(NotSpecified, "StartTimer failed %s: ", chip::ErrorStr(err));
-    }
+        this->mFunctionTimerActive = true;
+    exit:
+        if (err != CHIP_NO_ERROR)
+        {
+            ChipLogError(NotSpecified, "StartTimer failed %s: ", chip::ErrorStr(err));
+        }
+    });
 }
 
 void AppTask::ActionInitiated(LightingManager::Action_t aAction)
@@ -595,22 +689,25 @@ void AppTask::DispatchEvent(AppEvent * aEvent)
  */
 void AppTask::UpdateClusterState(void)
 {
-    ChipLogProgress(NotSpecified, "UpdateClusterState");
+    SystemLayer().ScheduleLambda([] {
+        ChipLogProgress(NotSpecified, "UpdateClusterState");
 
-    // Write the new on/off value
-    EmberAfStatus status = Clusters::OnOff::Attributes::OnOff::Set(QPG_LIGHT_ENDPOINT_ID, LightingMgr().IsTurnedOn());
+        // Write the new on/off value
+        Protocols::InteractionModel::Status status =
+            Clusters::OnOff::Attributes::OnOff::Set(QPG_LIGHT_ENDPOINT_ID, LightingMgr().IsTurnedOn());
 
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
-    {
-        ChipLogError(NotSpecified, "ERR: updating on/off %x", status);
-    }
+        if (status != Protocols::InteractionModel::Status::Success)
+        {
+            ChipLogError(NotSpecified, "ERR: updating on/off %x", to_underlying(status));
+        }
 
-    // Write new level value
-    status = Clusters::LevelControl::Attributes::CurrentLevel::Set(QPG_LIGHT_ENDPOINT_ID, LightingMgr().GetLevel());
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
-    {
-        ChipLogError(NotSpecified, "ERR: updating level %x", status);
-    }
+        // Write new level value
+        status = Clusters::LevelControl::Attributes::CurrentLevel::Set(QPG_LIGHT_ENDPOINT_ID, LightingMgr().GetLevel());
+        if (status != Protocols::InteractionModel::Status::Success)
+        {
+            ChipLogError(NotSpecified, "ERR: updating level %x", to_underlying(status));
+        }
+    });
 }
 
 void AppTask::UpdateLEDs(void)
@@ -624,10 +721,14 @@ void AppTask::UpdateLEDs(void)
     // If the system has ble connection(s) uptill the stage above, THEN blink
     // the LEDs at an even rate of 100ms.
     //
-    // Otherwise, blink the LED ON for a very short time.
+    // Otherwise, turn the LED OFF.
     if (sIsThreadProvisioned && sIsThreadEnabled)
     {
         qvIO_LedSet(SYSTEM_STATE_LED, true);
+    }
+    else if (sIsThreadProvisioned && !sIsThreadEnabled)
+    {
+        qvIO_LedBlink(SYSTEM_STATE_LED, 950, 50);
     }
     else if (sHaveBLEConnections)
     {
@@ -640,7 +741,7 @@ void AppTask::UpdateLEDs(void)
     else
     {
         // not commisioned yet
-        qvIO_LedBlink(SYSTEM_STATE_LED, 50, 950);
+        qvIO_LedSet(SYSTEM_STATE_LED, false);
     }
 }
 
@@ -693,7 +794,7 @@ static void NextCountdown(void)
     }
     else
     {
-        ConfigurationMgr().InitiateFactoryReset();
+        SystemLayer().ScheduleLambda([] { ConfigurationMgr().InitiateFactoryReset(); });
     }
 }
 

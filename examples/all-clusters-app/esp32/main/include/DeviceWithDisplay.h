@@ -32,10 +32,9 @@
 #include <vector>
 
 #include <app-common/zap-generated/attributes/Accessors.h>
-#include <app/clusters/door-lock-server/door-lock-server.h>
 #include <app/server/Dnssd.h>
-#include <app/server/OnboardingCodesUtil.h>
 #include <app/server/Server.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 
 #if CONFIG_HAVE_DISPLAY
 #include "Display.h"

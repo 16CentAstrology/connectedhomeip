@@ -20,10 +20,8 @@
 
 #include <app-common/zap-generated/cluster-objects.h>
 
-#include <app/AttributeAccessInterface.h>
+#include <app/AttributeValueEncoder.h>
 #include <app/CommandResponseHelper.h>
-#include <app/util/af.h>
-#include <list>
 
 namespace chip {
 namespace app {
@@ -43,9 +41,9 @@ public:
     Delegate() : Delegate(false){};
     Delegate(bool featureMapContentPlatform) { mFeatureMapContentPlatform = featureMapContentPlatform; };
 
-    inline bool HasFeature(ApplicationLauncherFeature feature)
+    inline bool HasFeature(Feature feature)
     {
-        if (feature == ApplicationLauncherFeature::kApplicationPlatform)
+        if (feature == Feature::kApplicationPlatform)
         {
             return mFeatureMapContentPlatform;
         }

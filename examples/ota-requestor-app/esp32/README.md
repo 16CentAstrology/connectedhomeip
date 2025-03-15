@@ -3,9 +3,9 @@
 A prototype application that demonstrates OTA Requestor capabilities.
 
 Please
-[setup ESP-IDF and CHIP Environment](../../../docs/guides/esp32/setup_idf_chip.md)
+[setup ESP-IDF and CHIP Environment](../../../docs/platforms/esp32/setup_idf_chip.md)
 and refer
-[building and commissioning](../../../docs/guides/esp32/build_app_and_commission.md)
+[building and commissioning](../../../docs/platforms/esp32/build_app_and_commission.md)
 guides to get started.
 
 ---
@@ -13,7 +13,7 @@ guides to get started.
 -   [Prerequisite](#prerequisite)
 -   [Query for an OTA Image](#query-for-an-ota-image)
 -   [ESP32 OTA Requestor with Linux OTA Provider](#esp32-ota-requestor-with-linux-ota-provider)
--   [RPC console and Device Tracing](../../../docs/guides/esp32/rpc_console.md)
+-   [RPC console and Device Tracing](../../../docs/platforms/esp32/rpc_console.md)
 
 ---
 
@@ -28,7 +28,7 @@ After commissioning is successful, announce OTA provider's presence using
 chip-tool. On receiving this command OTA requestor will query for OTA image.
 
 ```
-./out/debug/chip-tool otasoftwareupdaterequestor announce-ota-provider <PROVIDER NODE ID> 0 0 0 <REQUESTOR NODE ID> 0
+./out/debug/chip-tool otasoftwareupdaterequestor announce-otaprovider <PROVIDER NODE ID> 0 0 0 <REQUESTOR NODE ID> 0
 ```
 
 Once the transfer is complete, OTA requestor sends ApplyUpdateRequest command to

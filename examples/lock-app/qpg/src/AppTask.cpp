@@ -16,6 +16,11 @@
  *    limitations under the License.
  */
 
+#if !defined(GP_APP_DIVERSITY_POWERCYCLECOUNTING)
+#error This application requires powercycle counting.
+#endif
+
+#include "powercycle_counting.h"
 #include "qvIO.h"
 
 #include "AppConfig.h"
@@ -23,14 +28,17 @@
 #include "AppTask.h"
 #include "ota.h"
 
-#include <app/server/OnboardingCodesUtil.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 
 #include <app-common/zap-generated/attributes/Accessors.h>
-#include <app/clusters/general-diagnostics-server/GenericFaultTestEventTriggerDelegate.h>
+#include <app/TestEventTriggerDelegate.h>
+#include <app/clusters/general-diagnostics-server/GenericFaultTestEventTriggerHandler.h>
 #include <app/clusters/general-diagnostics-server/general-diagnostics-server.h>
+#include <app/clusters/identify-server/identify-server.h>
 #include <app/server/Dnssd.h>
 #include <app/server/Server.h>
 #include <app/util/attribute-storage.h>
+#include <data-model-providers/codegen/Instance.h>
 
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
@@ -57,6 +65,10 @@ using namespace ::chip::DeviceLayer;
 #define APP_TASK_PRIORITY 2
 #define APP_EVENT_QUEUE_SIZE 10
 #define QPG_LOCK_ENDPOINT_ID (1)
+#define SECONDS_IN_HOUR (3600)                                              // we better keep this 3600
+#define TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS (1 * SECONDS_IN_HOUR) // increment every hour
+
+#define NMBR_OF_RESETS_BLE_ADVERTISING (3)
 
 namespace {
 TaskHandle_t sAppTaskHandle;
@@ -87,6 +99,77 @@ namespace {
 constexpr int extDiscTimeoutSecs = 20;
 }
 
+Clusters::Identify::EffectIdentifierEnum sIdentifyEffect = Clusters::Identify::EffectIdentifierEnum::kStopEffect;
+
+/**********************************************************
+ * Identify Callbacks
+ *********************************************************/
+
+namespace {
+void OnTriggerIdentifyEffectCompleted(chip::System::Layer * systemLayer, void * appState)
+{
+    sIdentifyEffect = Clusters::Identify::EffectIdentifierEnum::kStopEffect;
+}
+} // namespace
+
+void OnTriggerIdentifyEffect(Identify * identify)
+{
+    sIdentifyEffect = identify->mCurrentEffectIdentifier;
+
+    if (identify->mEffectVariant != Clusters::Identify::EffectVariantEnum::kDefault)
+    {
+        ChipLogDetail(AppServer, "Identify Effect Variant unsupported. Using default");
+    }
+
+    switch (sIdentifyEffect)
+    {
+    case Clusters::Identify::EffectIdentifierEnum::kBlink:
+        ChipLogProgress(Zcl, "kBlink");
+        qvIO_LedBlink(LOCK_STATE_LED, 100, 100);
+        break;
+    case Clusters::Identify::EffectIdentifierEnum::kBreathe:
+        ChipLogProgress(Zcl, "kBreathe");
+        qvIO_LedBlink(LOCK_STATE_LED, 500, 500);
+        break;
+    case Clusters::Identify::EffectIdentifierEnum::kOkay:
+        ChipLogProgress(Zcl, "kOkay");
+        qvIO_LedBlink(LOCK_STATE_LED, 1000, 1000);
+        break;
+    case Clusters::Identify::EffectIdentifierEnum::kChannelChange:
+        ChipLogProgress(Zcl, "kChannelChange");
+        SystemLayer().ScheduleLambda([identify] {
+            (void) chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds16(5), OnTriggerIdentifyEffectCompleted,
+                                                               identify);
+        });
+        break;
+    case Clusters::Identify::EffectIdentifierEnum::kFinishEffect:
+        ChipLogProgress(Zcl, "kFinishEffect");
+        SystemLayer().ScheduleLambda([identify] {
+            (void) chip::DeviceLayer::SystemLayer().CancelTimer(OnTriggerIdentifyEffectCompleted, identify);
+            (void) chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds16(1), OnTriggerIdentifyEffectCompleted,
+                                                               identify);
+        });
+        break;
+    case Clusters::Identify::EffectIdentifierEnum::kStopEffect:
+        ChipLogProgress(Zcl, "kStopEffect");
+        SystemLayer().ScheduleLambda(
+            [identify] { (void) chip::DeviceLayer::SystemLayer().CancelTimer(OnTriggerIdentifyEffectCompleted, identify); });
+        sIdentifyEffect = Clusters::Identify::EffectIdentifierEnum::kStopEffect;
+        qvIO_LedSet(LOCK_STATE_LED, false);
+        break;
+    default:
+        ChipLogProgress(Zcl, "No identifier effect");
+    }
+}
+
+Identify gIdentify = {
+    chip::EndpointId{ 1 },
+    [](Identify *) { ChipLogProgress(Zcl, "onIdentifyStart"); },
+    [](Identify *) { ChipLogProgress(Zcl, "onIdentifyStop"); },
+    Clusters::Identify::IdentifyTypeEnum::kVisibleIndicator,
+    OnTriggerIdentifyEffect,
+};
+
 void LockOpenThreadTask(void)
 {
     chip::DeviceLayer::ThreadStackMgr().LockThreadStack();
@@ -107,7 +190,8 @@ CHIP_ERROR AppTask::StartAppTask()
     }
 
     // Start App task.
-    sAppTaskHandle = xTaskCreateStatic(AppTaskMain, APP_TASK_NAME, ArraySize(appStack), nullptr, 1, appStack, &appTaskStruct);
+    sAppTaskHandle =
+        xTaskCreateStatic(AppTaskMain, APP_TASK_NAME, MATTER_ARRAY_SIZE(appStack), nullptr, 1, appStack, &appTaskStruct);
     if (sAppTaskHandle == nullptr)
     {
         return CHIP_ERROR_NO_MEMORY;
@@ -120,6 +204,7 @@ void AppTask::InitServer(intptr_t arg)
 {
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    initParams.dataModelProvider = CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
 
     gExampleDeviceInfoProvider.SetStorageDelegate(initParams.persistentStorageDelegate);
     chip::DeviceLayer::SetDeviceInfoProvider(&gExampleDeviceInfoProvider);
@@ -130,10 +215,14 @@ void AppTask::InitServer(intptr_t arg)
     nativeParams.openThreadInstancePtr = chip::DeviceLayer::ThreadStackMgrImpl().OTInstance();
     initParams.endpointNativeParams    = static_cast<void *>(&nativeParams);
 
-    // Use GenericFaultTestEventTriggerDelegate to inject faults
-    static GenericFaultTestEventTriggerDelegate testEventTriggerDelegate{ ByteSpan(sTestEventTriggerEnableKey) };
+    // Use GenericFaultTestEventTriggerHandler to inject faults
+    static SimpleTestEventTriggerDelegate sTestEventTriggerDelegate{};
+    static GenericFaultTestEventTriggerHandler sFaultTestEventTriggerHandler{};
+    VerifyOrDie(sTestEventTriggerDelegate.Init(ByteSpan(sTestEventTriggerEnableKey)) == CHIP_NO_ERROR);
+    VerifyOrDie(sTestEventTriggerDelegate.AddHandler(&sFaultTestEventTriggerHandler) == CHIP_NO_ERROR);
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
-    initParams.testEventTriggerDelegate = &testEventTriggerDelegate;
+    initParams.dataModelProvider        = CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
+    initParams.testEventTriggerDelegate = &sTestEventTriggerDelegate;
 
     chip::Server::GetInstance().Init(initParams);
 
@@ -141,6 +230,21 @@ void AppTask::InitServer(intptr_t arg)
     chip::app::DnssdServer::Instance().SetExtendedDiscoveryTimeoutSecs(extDiscTimeoutSecs);
 #endif
 }
+
+void AppTask::OpenCommissioning(intptr_t arg)
+{
+    // Enable BLE advertisements
+
+    SystemLayer().ScheduleLambda([] {
+        CHIP_ERROR err;
+        err = chip::Server::GetInstance().GetCommissioningWindowManager().OpenBasicCommissioningWindow();
+        if (err == CHIP_NO_ERROR)
+        {
+            ChipLogProgress(NotSpecified, "BLE advertising started. Waiting for Pairing.");
+        }
+    });
+}
+
 CHIP_ERROR AppTask::Init()
 {
     CHIP_ERROR err = CHIP_NO_ERROR;
@@ -177,7 +281,19 @@ CHIP_ERROR AppTask::Init()
     ConfigurationMgr().LogDeviceConfig();
     PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
 
+    sIsThreadProvisioned     = ConnectivityMgr().IsThreadProvisioned();
+    sIsThreadEnabled         = ConnectivityMgr().IsThreadEnabled();
+    sHaveBLEConnections      = (ConnectivityMgr().NumBLEConnections() != 0);
+    sIsBLEAdvertisingEnabled = ConnectivityMgr().IsBLEAdvertisingEnabled();
     UpdateLEDs();
+
+    err = chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS),
+                                                      TotalHoursTimerHandler, this);
+
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(NotSpecified, "StartTimer failed %s: ", chip::ErrorStr(err));
+    }
 
     return err;
 }
@@ -195,6 +311,23 @@ void AppTask::AppTaskMain(void * pvParameter)
             eventReceived = xQueueReceive(sAppEventQueue, &event, 0);
         }
     }
+}
+
+void AppTask::JammedLockEventHandler(AppEvent * aEvent)
+{
+    SystemLayer().ScheduleLambda([] {
+        bool retVal;
+
+        retVal = DoorLockServer::Instance().SendLockAlarmEvent(QPG_LOCK_ENDPOINT_ID, AlarmCodeEnum::kLockJammed);
+        if (!retVal)
+        {
+            ChipLogProgress(NotSpecified, "[BTN] Lock jammed event send failed");
+        }
+        else
+        {
+            ChipLogProgress(NotSpecified, "[BTN] Lock jammed event sent");
+        }
+    });
 }
 
 void AppTask::LockActionEventHandler(AppEvent * aEvent)
@@ -239,7 +372,7 @@ void AppTask::LockActionEventHandler(AppEvent * aEvent)
 
 void AppTask::ButtonEventHandler(uint8_t btnIdx, bool btnPressed)
 {
-    if (btnIdx != APP_LOCK_BUTTON && btnIdx != APP_FUNCTION_BUTTON)
+    if (btnIdx != APP_LOCK_BUTTON && btnIdx != APP_FUNCTION_BUTTON && btnIdx != APP_LOCK_JAMMED_BUTTON)
     {
         return;
     }
@@ -252,6 +385,10 @@ void AppTask::ButtonEventHandler(uint8_t btnIdx, bool btnPressed)
     if (btnIdx == APP_LOCK_BUTTON && btnPressed == true)
     {
         button_event.Handler = LockActionEventHandler;
+    }
+    else if (btnIdx == APP_LOCK_JAMMED_BUTTON && btnPressed == true)
+    {
+        button_event.Handler = JammedLockEventHandler;
     }
     else if (btnIdx == APP_FUNCTION_BUTTON)
     {
@@ -273,6 +410,40 @@ void AppTask::TimerEventHandler(chip::System::Layer * aLayer, void * aAppState)
     event.TimerEvent.Context = aAppState;
     event.Handler            = FunctionTimerEventHandler;
     sAppTask.PostEvent(&event);
+}
+
+void AppTask::TotalHoursTimerHandler(chip::System::Layer * aLayer, void * aAppState)
+{
+    ChipLogProgress(NotSpecified, "HourlyTimer");
+
+    CHIP_ERROR err;
+    uint32_t totalOperationalHours = 0;
+
+    err = ConfigurationMgr().GetTotalOperationalHours(totalOperationalHours);
+
+    if (err == CHIP_NO_ERROR)
+    {
+        ConfigurationMgr().StoreTotalOperationalHours(totalOperationalHours +
+                                                      (TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS / SECONDS_IN_HOUR));
+    }
+    else if (err == CHIP_DEVICE_ERROR_CONFIG_NOT_FOUND)
+    {
+        totalOperationalHours = 0; // set this explicitly to 0 for safety
+        ConfigurationMgr().StoreTotalOperationalHours(totalOperationalHours +
+                                                      (TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS / SECONDS_IN_HOUR));
+    }
+    else
+    {
+        ChipLogError(DeviceLayer, "Failed to get total operational hours of the Node");
+    }
+
+    err = chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(TOTAL_OPERATIONAL_HOURS_SAVE_INTERVAL_SECONDS),
+                                                      TotalHoursTimerHandler, nullptr);
+
+    if (err != CHIP_NO_ERROR)
+    {
+        ChipLogError(NotSpecified, "StartTimer failed %s: ", chip::ErrorStr(err));
+    }
 }
 
 void AppTask::FunctionTimerEventHandler(AppEvent * aEvent)
@@ -363,10 +534,14 @@ void AppTask::FunctionHandler(AppEvent * aEvent)
                 if (!ConnectivityMgr().IsThreadProvisioned())
                 {
                     // Enable BLE advertisements and pairing window
-                    if (chip::Server::GetInstance().GetCommissioningWindowManager().OpenBasicCommissioningWindow() == CHIP_NO_ERROR)
-                    {
-                        ChipLogProgress(NotSpecified, "BLE advertising started. Waiting for Pairing.");
-                    }
+                    SystemLayer().ScheduleLambda([] {
+                        CHIP_ERROR err;
+                        if ((err = chip::Server::GetInstance().GetCommissioningWindowManager().OpenBasicCommissioningWindow()) ==
+                            CHIP_NO_ERROR)
+                        {
+                            ChipLogProgress(NotSpecified, "BLE advertising started. Waiting for Pairing.");
+                        }
+                    });
                 }
                 else
                 {
@@ -402,24 +577,28 @@ void AppTask::FunctionHandler(AppEvent * aEvent)
 
 void AppTask::CancelTimer()
 {
-    chip::DeviceLayer::SystemLayer().CancelTimer(TimerEventHandler, this);
-    mFunctionTimerActive = false;
+    SystemLayer().ScheduleLambda([this] {
+        chip::DeviceLayer::SystemLayer().CancelTimer(TimerEventHandler, this);
+        this->mFunctionTimerActive = false;
+    });
 }
 
 void AppTask::StartTimer(uint32_t aTimeoutInMs)
 {
-    CHIP_ERROR err;
+    SystemLayer().ScheduleLambda([aTimeoutInMs, this] {
+        CHIP_ERROR err;
+        chip::DeviceLayer::SystemLayer().CancelTimer(TimerEventHandler, this);
+        err =
+            chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(aTimeoutInMs), TimerEventHandler, this);
+        SuccessOrExit(err);
 
-    chip::DeviceLayer::SystemLayer().CancelTimer(TimerEventHandler, this);
-    err = chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(aTimeoutInMs), TimerEventHandler, this);
-    SuccessOrExit(err);
-
-    mFunctionTimerActive = true;
-exit:
-    if (err != CHIP_NO_ERROR)
-    {
-        ChipLogError(NotSpecified, "StartTimer failed %s: ", chip::ErrorStr(err));
-    }
+        this->mFunctionTimerActive = true;
+    exit:
+        if (err != CHIP_NO_ERROR)
+        {
+            ChipLogError(NotSpecified, "StartTimer failed %s: ", chip::ErrorStr(err));
+        }
+    });
 }
 
 void AppTask::ActionInitiated(BoltLockManager::Action_t aAction, int32_t aActor)
@@ -438,6 +617,11 @@ void AppTask::ActionInitiated(BoltLockManager::Action_t aAction, int32_t aActor)
     if (aActor == AppEvent::kEventType_Button)
     {
         sAppTask.mSyncClusterToButtonAction = true;
+    }
+
+    if (aActor == AppEvent::kEventType_Lock)
+    {
+        sAppTask.mNotifyState = true;
     }
 
     qvIO_LedBlink(LOCK_STATE_LED, 50, 50);
@@ -461,10 +645,11 @@ void AppTask::ActionCompleted(BoltLockManager::Action_t aAction)
         qvIO_LedSet(LOCK_STATE_LED, false);
     }
 
-    if (sAppTask.mSyncClusterToButtonAction)
+    if (sAppTask.mSyncClusterToButtonAction || sAppTask.mNotifyState)
     {
         sAppTask.UpdateClusterState();
         sAppTask.mSyncClusterToButtonAction = false;
+        sAppTask.mNotifyState               = false;
     }
 }
 
@@ -513,14 +698,38 @@ void AppTask::UpdateClusterState(void)
     using namespace chip::app::Clusters;
     auto newValue = BoltLockMgr().IsUnlocked() ? DoorLock::DlLockState::kUnlocked : DoorLock::DlLockState::kLocked;
 
-    ChipLogProgress(NotSpecified, "UpdateClusterState");
+    SystemLayer().ScheduleLambda([newValue] {
+        bool retVal = true;
+        chip::app::DataModel::Nullable<chip::app::Clusters::DoorLock::DlLockState> currentLockState;
+        chip::app::Clusters::DoorLock::Attributes::LockState::Get(QPG_LOCK_ENDPOINT_ID, currentLockState);
 
-    EmberAfStatus status = DoorLock::Attributes::LockState::Set(QPG_LOCK_ENDPOINT_ID, newValue);
+        if (currentLockState.IsNull())
+        {
+            Protocols::InteractionModel::Status status = DoorLock::Attributes::LockState::Set(QPG_LOCK_ENDPOINT_ID, newValue);
+            if (status != Protocols::InteractionModel::Status::Success)
+            {
+                ChipLogError(NotSpecified, "ERR: updating DoorLock %x", to_underlying(status));
+            }
+        }
+        else
+        {
+            ChipLogProgress(NotSpecified, "Updating LockState attribute");
+            if (sAppTask.mSyncClusterToButtonAction)
+            {
+                retVal = DoorLockServer::Instance().SetLockState(QPG_LOCK_ENDPOINT_ID, newValue, OperationSourceEnum::kManual);
+            }
 
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
-    {
-        ChipLogError(NotSpecified, "ERR: updating DoorLock %x", status);
-    }
+            if (retVal && sAppTask.mNotifyState)
+            {
+                retVal = DoorLockServer::Instance().SetLockState(QPG_LOCK_ENDPOINT_ID, newValue, OperationSourceEnum::kRemote);
+            }
+
+            if (!retVal)
+            {
+                ChipLogError(NotSpecified, "ERR: updating DoorLock");
+            }
+        }
+    });
 }
 
 void AppTask::UpdateLEDs(void)
@@ -534,10 +743,14 @@ void AppTask::UpdateLEDs(void)
     // If the system has ble connection(s) uptill the stage above, THEN blink
     // the LEDs at an even rate of 100ms.
     //
-    // Otherwise, blink the LED ON for a very short time.
+    // Otherwise, turn the LED OFF.
     if (sIsThreadProvisioned && sIsThreadEnabled)
     {
         qvIO_LedSet(SYSTEM_STATE_LED, true);
+    }
+    else if (sIsThreadProvisioned && !sIsThreadEnabled)
+    {
+        qvIO_LedBlink(SYSTEM_STATE_LED, 950, 50);
     }
     else if (sHaveBLEConnections)
     {
@@ -550,7 +763,7 @@ void AppTask::UpdateLEDs(void)
     else
     {
         // not commisioned yet
-        qvIO_LedBlink(SYSTEM_STATE_LED, 50, 950);
+        qvIO_LedSet(SYSTEM_STATE_LED, false);
     }
 }
 
@@ -591,4 +804,22 @@ void AppTask::MatterEventHandler(const ChipDeviceEvent * event, intptr_t)
     default:
         break;
     }
+}
+
+extern "C" {
+void gpAppFramework_Reset_cbTriggerResetCountCompleted(void)
+{
+    uint8_t resetCount = gpAppFramework_Reset_GetResetCount();
+
+    ChipLogProgress(NotSpecified, "%d resets so far", resetCount);
+    if (resetCount >= NMBR_OF_RESETS_BLE_ADVERTISING)
+    {
+        // Open commissioning if no fabric was available
+        if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0)
+        {
+            ChipLogProgress(NotSpecified, "No fabrics, starting commissioning.");
+            AppTask::OpenCommissioning((intptr_t) 0);
+        }
+    }
+}
 }

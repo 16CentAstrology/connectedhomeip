@@ -35,7 +35,6 @@
 
 #include <thread>
 
-#include <app-common/zap-generated/enums.h>
 #include <app-common/zap-generated/ids/Events.h>
 #include <lib/support/CHIPMem.h>
 #include <lib/support/logging/CHIPLogging.h>
@@ -104,7 +103,7 @@ void PlatformManagerImpl::WiFiIPChangeListener()
                 {
                     if (routeInfo->rta_type == IFA_LOCAL)
                     {
-                        char name[IFNAMSIZ];
+                        char name[Inet::InterfaceId::kMaxIfNameLength];
                         if (if_indextoname(addressMessage->ifa_index, name) == nullptr)
                         {
                             ChipLogError(DeviceLayer, "Error %d when getting the interface name at index: %d", errno,

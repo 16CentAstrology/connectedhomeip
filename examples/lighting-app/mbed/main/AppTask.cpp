@@ -21,12 +21,13 @@
 #include "LightingManager.h"
 
 #include <app/server/Dnssd.h>
-#include <app/server/OnboardingCodesUtil.h>
 #include <app/server/Server.h>
 #include <credentials/DeviceAttestationCredsProvider.h>
 #include <credentials/examples/DeviceAttestationCredsExample.h>
+#include <data-model-providers/codegen/Instance.h>
 #include <lib/support/logging/CHIPLogging.h>
 #include <platform/CHIPDeviceLayer.h>
+#include <setup_payload/OnboardingCodesUtil.h>
 
 // mbed-os headers
 #include "drivers/Timeout.h"
@@ -116,6 +117,7 @@ int AppTask::Init()
     // Init ZCL Data Model and start server
     static chip::CommonCaseDeviceServerInitParams initParams;
     (void) initParams.InitializeStaticResourcesBeforeServerInit();
+    initParams.dataModelProvider = app::CodegenDataModelProviderInstance(initParams.persistentStorageDelegate);
 
     error = Server::GetInstance().Init(initParams);
     if (error != CHIP_NO_ERROR)
@@ -462,18 +464,18 @@ void AppTask::UpdateClusterState()
     uint8_t onoff = LightingMgr().IsTurnedOn();
 
     // write the new on/off value
-    EmberAfStatus status = app::Clusters::OnOff::Attributes::OnOff::Set(1, onoff);
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
+    Protocols::InteractionModel::Status status = app::Clusters::OnOff::Attributes::OnOff::Set(1, onoff);
+    if (status != Protocols::InteractionModel::Status::Success)
     {
-        ChipLogError(NotSpecified, "Updating on/off cluster failed: %x", status);
+        ChipLogError(NotSpecified, "Updating on/off cluster failed: %x", to_underlying(status));
     }
 
     uint8_t level = LightingMgr().GetLevel();
 
     status = app::Clusters::LevelControl::Attributes::CurrentLevel::Set(1, level);
 
-    if (status != EMBER_ZCL_STATUS_SUCCESS)
+    if (status != Protocols::InteractionModel::Status::Success)
     {
-        ChipLogError(NotSpecified, "Updating level cluster failed: %x", status);
+        ChipLogError(NotSpecified, "Updating level cluster failed: %x", to_underlying(status));
     }
 }

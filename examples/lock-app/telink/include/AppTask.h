@@ -18,72 +18,36 @@
 
 #pragma once
 
-#include "AppEvent.h"
-#include "BoltLockManager.h"
-#if CONFIG_CHIP_ENABLE_APPLICATION_STATUS_LED
-#include "LEDWidget.h"
-#endif
-#include "PWMDevice.h"
+#include "AppConfig.h"
+#include "AppTaskCommon.h"
+#include "LockManager.h"
 
-#include <platform/CHIPDeviceLayer.h>
+#define APP_ERROR_EVENT_QUEUE_FAILED CHIP_APPLICATION_ERROR(0x01)
+#define APP_ERROR_CREATE_TASK_FAILED CHIP_APPLICATION_ERROR(0x02)
+#define APP_ERROR_UNHANDLED_EVENT CHIP_APPLICATION_ERROR(0x03)
+#define APP_ERROR_CREATE_TIMER_FAILED CHIP_APPLICATION_ERROR(0x04)
+#define APP_ERROR_START_TIMER_FAILED CHIP_APPLICATION_ERROR(0x05)
+#define APP_ERROR_STOP_TIMER_FAILED CHIP_APPLICATION_ERROR(0x06)
+#define APP_ERROR_ALLOCATION_FAILED CHIP_APPLICATION_ERROR(0x07)
 
-#if CONFIG_CHIP_FACTORY_DATA
-#include <platform/telink/FactoryDataProvider.h>
-#endif
-
-struct k_timer;
-struct Identify;
-
-class AppTask
+class AppTask : public AppTaskCommon
 {
-public:
-    CHIP_ERROR StartApp();
-
-    void PostEvent(AppEvent * event);
-    void UpdateClusterState(BoltLockManager::State state, BoltLockManager::OperationSource source);
-    static void IdentifyEffectHandler(EmberAfIdentifyEffectIdentifier aEffect);
-
 private:
     friend AppTask & GetAppTask(void);
+    friend class AppTaskCommon;
 
     CHIP_ERROR Init(void);
-
-    static void ActionIdentifyStateUpdateHandler(k_timer * timer);
-
-    void DispatchEvent(AppEvent * event);
-
-#if CONFIG_CHIP_ENABLE_APPLICATION_STATUS_LED
-    static void UpdateLedStateEventHandler(AppEvent * aEvent);
-    static void LEDStateUpdateHandler(LEDWidget * ledWidget);
-    static void UpdateStatusLED();
-#endif
-    static void LockActionButtonEventHandler(void);
-    static void FactoryResetButtonEventHandler(void);
-    static void StartThreadButtonEventHandler(void);
-    static void StartBleAdvButtonEventHandler(void);
-
-    static void ChipEventHandler(const chip::DeviceLayer::ChipDeviceEvent * event, intptr_t arg);
-
-    static void FactoryResetTimerTimeoutCallback(k_timer * timer);
-
-    static void FactoryResetTimerEventHandler(AppEvent * aEvent);
-    static void FactoryResetHandler(AppEvent * aEvent);
-    static void StartThreadHandler(AppEvent * aEvent);
-    static void SwitchActionEventHandler(AppEvent * aEvent);
-    static void StartBleAdvHandler(AppEvent * aEvent);
-    static void UpdateIdentifyStateEventHandler(AppEvent * aEvent);
+    void LinkButtons(ButtonManager & buttonManager);
+    void LinkLeds(LedManager & ledManager);
 
     static void LockActionEventHandler(AppEvent * event);
-    static void LockStateChanged(BoltLockManager::State state, BoltLockManager::OperationSource source);
-
-    static void InitButtons(void);
+    static void LockStateChanged(LockManager::State_t state);
+    static void LockJammedEventHandler(void);
+    static void LockJammedActionHandler(AppEvent * aEvent);
+    static void LockStateEventHandler(void);
+    static void LockStateActionHandler(AppEvent * aEvent);
 
     static AppTask sAppTask;
-    PWMDevice mPwmIdentifyLed;
-
-#if CONFIG_CHIP_FACTORY_DATA
-    chip::DeviceLayer::FactoryDataProvider<chip::DeviceLayer::ExternalFlashFactoryData> mFactoryDataProvider;
-#endif
 };
 
 inline AppTask & GetAppTask(void)

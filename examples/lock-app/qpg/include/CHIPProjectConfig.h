@@ -40,9 +40,18 @@
  * CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION
  *
  * A uint32_t identifying the software version running on the device.
+ * First two bytes are reflecting the Matter standard
+ * Last two bytes are reflecting the SDK version of which the first nibble of the first byte represents the major
+ * version and the second nibble of the first byte has the minor number. The last byte holds the patch number.
+ * example for SDK v0.1.5 with Matter v1.2 standard:
+ * 0x01020105
  */
 #ifndef CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 0x0002
+#ifndef OTA_TEST_IMAGE
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 0x01020105
+#else
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 0x01020106
+#endif
 #endif
 
 /**
@@ -53,21 +62,19 @@
  * {MAJOR_VERSION}.0d{MINOR_VERSION}
  */
 #ifndef CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING
-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.0"
+#ifndef OTA_TEST_IMAGE
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.2-0.1.5"
+#else
+#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.2-0.1.6"
 #endif
+#endif
+
 /**
  * CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE
  *
  * Enable support for Chip-over-BLE (CHIPoBLE).
  */
 #define CHIP_DEVICE_CONFIG_ENABLE_CHIPOBLE 1
-
-/**
- * CHIP_DEVICE_CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE
- *
- * A size, in bytes, of the individual debug event logging buffer.
- */
-#define CHIP_DEVICE_CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE (512)
 
 /**
  *  @name Interaction Model object pool configuration.
@@ -122,6 +129,20 @@
 #define CHIP_DEVICE_CONFIG_ENABLE_SED 1
 #endif
 
+/**
+ * @def CHIP_DEVICE_CONFIG_ENABLE_SSED
+ *
+ * @brief Defines if a matter device is acting as a Synchronized Sleepy End Device(SSED)
+ */
+#ifndef CHIP_DEVICE_CONFIG_ENABLE_SSED
+#define CHIP_DEVICE_CONFIG_ENABLE_SSED 0
+#endif
+
+/**
+ * @def CHIP_DEVICE_CONFIG_THREAD_FTD
+ *
+ * @brief Defines if a matter device is acting as Full Thread Device (FTD)
+ */
 #ifndef CHIP_DEVICE_CONFIG_THREAD_FTD
 #define CHIP_DEVICE_CONFIG_THREAD_FTD 0
 #endif

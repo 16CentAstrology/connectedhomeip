@@ -15,12 +15,9 @@
 #
 
 import argparse
-import base64
 import datetime
 import os
-import struct
 import subprocess
-import sys
 
 
 class FactoryDataWriter:
@@ -143,7 +140,7 @@ class FactoryDataWriter:
 
         assert (bool(arguments.gen_spake2p_path) != bool(arguments.spake2_verifier)
                 ), "Provide either the spake2_verifier string or the path to the spake2 generator"
-        assert not (arguments.passcode in INVALID_PASSCODES), "The provided passcode is invalid"
+        assert arguments.passcode not in INVALID_PASSCODES, "The provided passcode is invalid"
 
         self._args = arguments
 
@@ -185,7 +182,7 @@ class FactoryDataWriter:
             cmdList.extend(["--serialno", self._args.jtagSerial])
 
     def create_nvm3injected_image(self):
-        """ Use commander command lines create a binary flashable to the EFR32 
+        """ Use commander command lines create a binary flashable to the EFR32
             containing the factory commissioning data in NVM3 section
         """
         isDeviceConnected = True
@@ -212,7 +209,7 @@ class FactoryDataWriter:
                     inputImage = self.BASE_MG24_FILE
                 else:
                     raise Exception('Invalid MCU')
-            except:
+            except Exception:
                 isDeviceConnected = False
                 print("Device not connected")
                 # When no device is connected user needs to provide the mcu family for which those credentials are to be created
